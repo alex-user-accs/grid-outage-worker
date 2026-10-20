@@ -5,7 +5,8 @@ import { MockDeyeClient } from "@/lib/deye/mock";
 import type { DeyeApi } from "@/lib/deye/types";
 import { pushEvent, syncAlerts, trackDeviceStatus, trackSoc } from "@/worker/events";
 import { JOBS, expectedCallsPerDay } from "@/worker/jobs";
-import { PAUSE_KEY, Scheduler } from "@/worker/scheduler";
+import { PAUSE_KEY, Scheduler, jobKey, retryDelay } from "@/worker/scheduler";
+import { signedBatteryPower, signedGridPower } from "@/lib/repo";
 
 /** Wraps the mock client and counts every method call as one API call (deviceLatest per 10 SNs). */
 function counting(now: () => number) {
@@ -90,6 +91,52 @@ describe("worker schedule", () => {
       { granularity: 3, period: "2026", final: 0 },
       { granularity: 4, period: "all", final: 0 },
     ]);
+  });
+});
+
+describe("scheduler recovery", () => {
+  it("does not record dependent jobs as run when station discovery fails, and retries soon", async () => {
+    const db = openDb(":memory:");
+    const t = new Date(2026, 9, 20, 22, 17).getTime();
+    let fail = true;
+    const inner = new MockDeyeClient(() => t);
+    const api = new Proxy(inner, {
+      get: (target, prop: string) =>
+        prop === "stationList" && fail
+          ? async () => {
+              throw new Error("Deye error 2101025: Incorrect password");
+            }
+          : (target as unknown as Record<string, unknown>)[prop],
+    }) as DeyeApi;
+    const s = new Scheduler(db, api, JOBS, opts);
+    await s.tick(t);
+    expect(kvGet(db, jobKey("station"))).toMatchObject({ ok: false, failures: 1, nextRun: t + 2 * 60_000 });
+    expect(kvGet(db, jobKey("stationLatest"))).toBeUndefined(); // skipped, not "ok"
+    fail = false; // user fixes .env
+    await s.tick(t + 60_000);
+    expect(kvGet<number>(db, "station_id")).toBeUndefined(); // still backing off
+    await s.tick(t + 2 * 60_000);
+    expect(kvGet<number>(db, "station_id")).toBe(1001);
+    expect(kvGet(db, jobKey("stationLatest"))).toMatchObject({ ok: true });
+  });
+
+  it("retry delay doubles from 2 min, capped at 1 h and the job interval", () => {
+    const H = 3_600_000;
+    expect([1, 2, 3, 4, 7].map((f) => retryDelay(f, 24 * H) / 60_000)).toEqual([2, 4, 8, 16, 60]);
+    expect(retryDelay(5, 2 * 60_000)).toBe(2 * 60_000);
+  });
+});
+
+describe("power sign conventions (from live data)", () => {
+  it("reads signed grid power from wirePower when gridPower is null", () => {
+    expect(signedGridPower({ gridPower: null, wirePower: 1380, purchasePower: null })).toBe(1380);
+    expect(signedGridPower({ gridPower: -500, wirePower: 1 })).toBe(-500);
+    expect(signedGridPower({})).toBeNull();
+  });
+  it("battery: + discharge, − charge", () => {
+    expect(signedBatteryPower({ batteryPower: -30 })).toBe(-30);
+    expect(signedBatteryPower({ chargePower: 400, dischargePower: 0 })).toBe(-400);
+    expect(signedBatteryPower({})).toBeNull();
   });
 });
 

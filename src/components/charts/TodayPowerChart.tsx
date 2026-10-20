@@ -8,8 +8,8 @@ import { AXIS_TICK, DataTable, Legend, type SeriesDef, makeTooltip } from "./com
 const POWER: SeriesDef<"pv" | "load" | "grid" | "battery">[] = [
   { key: "pv", label: "Solar", color: "var(--series-1)", format: fmtPower },
   { key: "load", label: "Load", color: "var(--series-2)", format: fmtPower },
-  { key: "grid", label: "Grid", color: "var(--series-3)", format: fmtPower },
-  { key: "battery", label: "Battery", color: "var(--series-4)", format: fmtPower },
+  { key: "grid", label: "Grid (+import / −export)", color: "var(--series-3)", format: fmtPower },
+  { key: "battery", label: "Battery (+discharge / −charge)", color: "var(--series-4)", format: fmtPower },
 ];
 const SOC: SeriesDef<"soc">[] = [{ key: "soc", label: "Battery SOC", color: "var(--series-4)", format: (v) => (v == null ? "—" : `${v}%`) }];
 

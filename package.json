@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n web,worker -c blue,green \"next dev\" \"tsx watch src/worker/index.ts\"",
+    "dev": "concurrently -n web,worker -c blue,green \"next dev\" \"tsx watch --include .env src/worker/index.ts\"",
     "dev:web": "next dev",
     "worker": "tsx src/worker/index.ts",
     "build": "next build",

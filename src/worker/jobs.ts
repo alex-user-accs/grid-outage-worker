@@ -24,7 +24,8 @@ export interface Job {
   /** Typical calls per run in steady state (excludes one-off backfills). */
   callsPerRun: number;
   description: string;
-  run(ctx: JobContext): Promise<void>;
+  /** Returns "skipped" when a prerequisite (e.g. the station id) is missing; the scheduler then retries next tick. */
+  run(ctx: JobContext): Promise<void | "skipped">;
 }
 
 export function saveSnapshot(db: DB, kind: string, ref: string, data: unknown, ts = Date.now()): void {
@@ -72,7 +73,7 @@ export const JOBS: Job[] = [
     description: "Device list of the station (SN, type, online status). Cached 1 h as Deye recommends.",
     async run({ db, api, now }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const devices = await api.stationDevices(id);
       saveSnapshot(db, "devices", String(id), devices, now);
       trackDeviceStatus(db, devices, now);
@@ -86,7 +87,7 @@ export const JOBS: Job[] = [
     description: "Live power flow: PV, load, grid, battery, SOC.",
     async run({ db, api, now, socLow, socHigh }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const latest = await api.stationLatest(id);
       saveSnapshot(db, "station_latest", String(id), latest, now);
       trackSoc(db, latest.batterySOC, socLow, socHigh, now);
@@ -100,9 +101,10 @@ export const JOBS: Job[] = [
     description: "Raw measure points of every non-logger device, batched 10 SNs per call.",
     async run({ db, api, now }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const row = db.prepare("SELECT json FROM snapshots WHERE kind = 'devices' AND ref = ?").get(String(id)) as { json: string } | undefined;
-      const devices: StationDevice[] = row ? JSON.parse(row.json) : [];
+      if (!row) return "skipped";
+      const devices: StationDevice[] = JSON.parse(row.json);
       const sns = devices.filter((d) => d.deviceType !== "COLLECTOR").map((d) => d.deviceSn);
       if (!sns.length) return;
       for (const item of await api.deviceLatest(sns)) saveSnapshot(db, "device_latest", item.deviceSn, item, now);
@@ -116,13 +118,14 @@ export const JOBS: Job[] = [
     description: "Intraday power frames for today (granularity 1). Yesterday is fetched once more after midnight, then frozen.",
     async run({ db, api, now }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const today = new Date(now);
       const yesterday = ymd(addDays(today, -1));
       if (!isFinal(db, id, 1, yesterday) && db.prepare("SELECT 1 FROM history WHERE station_id = ? AND granularity = 1 AND period = ?").get(id, yesterday)) {
-        saveHistory(db, id, 1, yesterday, await api.stationHistory(id, 1, yesterday), true, now);
+        saveHistory(db, id, 1, yesterday, await api.stationHistory(id, 1, yesterday, yesterday), true, now);
       }
-      saveHistory(db, id, 1, ymd(today), await api.stationHistory(id, 1, ymd(today)), false, now);
+      // Deye rejects granularity 1 without endAt (code 2101006), although its docs only mention startAt.
+      saveHistory(db, id, 1, ymd(today), await api.stationHistory(id, 1, ymd(today), ymd(today)), false, now);
     },
   },
   {
@@ -133,7 +136,7 @@ export const JOBS: Job[] = [
     description: "Alerts of the last 7 days (30 days on first run), to catch new and closed alerts.",
     async run({ db, api, now }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const hasAny = db.prepare("SELECT 1 FROM alerts LIMIT 1").get();
       const from = now - (hasAny ? 7 : 30) * 24 * HOUR;
       syncAlerts(db, id, await api.stationAlerts(id, from, now), now);
@@ -147,7 +150,7 @@ export const JOBS: Job[] = [
     description: "Daily energy for the current month (gran 2) and monthly energy for the current year (gran 3). Past month/year fetched once and frozen.",
     async run({ db, api, now }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const d = new Date(now);
       // Previous month / year: fetch once, keep forever (they no longer change).
       const prevMonth = addMonths(d, -1);
@@ -171,7 +174,7 @@ export const JOBS: Job[] = [
     description: "Yearly totals since commissioning (gran 4); summed for lifetime production/consumption.",
     async run({ db, api, now }) {
       const id = stationId(db);
-      if (!id) return;
+      if (!id) return "skipped";
       const st = db.prepare("SELECT json FROM snapshots WHERE kind = 'station' AND ref = ?").get(String(id)) as { json: string } | undefined;
       const started = st ? parseDeyeTime((JSON.parse(st.json) as Station).startOperatingTime) : null;
       const year = new Date(now).getFullYear();

@@ -28,7 +28,9 @@ const limitsSchema = z.object({
 });
 
 const authSchema = z.object({
-  ADMIN_PASSWORD_HASH: z.string().startsWith("$argon2", "ADMIN_PASSWORD_HASH must be an argon2 hash (npm run hash-password -- admin)"),
+  ADMIN_PASSWORD_HASH: z
+    .string()
+    .startsWith("$argon2", "ADMIN_PASSWORD_HASH must be an argon2 hash; escape every $ as \\$ in .env (npm run hash-password -- admin prints it that way)"),
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
 });
 

@@ -4,7 +4,7 @@ import { EnergyBars } from "@/components/charts/EnergyBars";
 import { TodayPowerChart } from "@/components/charts/TodayPowerChart";
 import { parseDeyeTime } from "@/lib/dates";
 import { fmtAgo, fmtDateTime, fmtEnergy, fmtPower } from "@/lib/format";
-import { getAlerts, getDaily, getLatest, getLifetime, getMonthly, getStation, getTodayCurve, getWorkerStatus } from "@/lib/repo";
+import { getAlerts, getDaily, getLatest, getLifetime, getMonthly, getStation, getTodayCurve, getWorkerStatus, signedBatteryPower, signedGridPower } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -39,13 +39,10 @@ export default function Dashboard() {
   const updated = parseDeyeTime(l?.lastUpdateTime) ?? latest?.ts ?? null;
   const openAlerts = alerts.filter((a) => a.status === 1);
 
-  // Import/export and charge/discharge use the dedicated unsigned fields when Deye provides them.
-  const gridIn = l?.purchasePower;
-  const gridOut = l?.wirePower;
-  const gridValue = gridIn != null || gridOut != null ? ((gridIn ?? 0) >= (gridOut ?? 0) ? gridIn : gridOut) : l?.gridPower;
-  const gridNote = gridIn != null || gridOut != null ? ((gridIn ?? 0) >= (gridOut ?? 0) ? "importing" : "exporting") : "as reported";
-  const charging = (l?.chargePower ?? 0) > (l?.dischargePower ?? 0);
-  const batteryValue = l?.chargePower != null || l?.dischargePower != null ? (charging ? l?.chargePower : l?.dischargePower) : l?.batteryPower;
+  const grid = l ? signedGridPower(l) : null;
+  const battery = l ? signedBatteryPower(l) : null;
+  const gridNote = grid == null ? undefined : grid > 0 ? "importing" : grid < 0 ? "exporting" : "idle";
+  const batteryNote = !battery ? "idle" : `${battery < 0 ? "charging" : "discharging"} ${fmtPower(Math.abs(battery))}`;
 
   return (
     <>
@@ -66,8 +63,8 @@ export default function Dashboard() {
       <section className="tiles" aria-label="Live values">
         <Tile label="Solar" value={fmtPower(l?.generationPower)} color="var(--series-1)" note={station?.installedCapacity ? `of ${station.installedCapacity} kWp` : undefined} />
         <Tile label="Home load" value={fmtPower(l?.consumptionPower)} color="var(--series-2)" />
-        <Tile label="Grid" value={fmtPower(gridValue)} color="var(--series-3)" note={gridNote} />
-        <Tile label="Battery" value={l?.batterySOC != null ? `${l.batterySOC}%` : "—"} color="var(--series-4)" note={batteryValue ? `${charging ? "charging" : "discharging"} ${fmtPower(batteryValue)}` : "idle"}>
+        <Tile label="Grid" value={fmtPower(grid == null ? null : Math.abs(grid))} color="var(--series-3)" note={gridNote} />
+        <Tile label="Battery" value={l?.batterySOC != null ? `${l.batterySOC}%` : "—"} color="var(--series-4)" note={batteryNote}>
           {l?.batterySOC != null && (
             <div className="meter" role="meter" aria-valuenow={l.batterySOC} aria-valuemin={0} aria-valuemax={100} aria-label="Battery state of charge">
               <span style={{ width: `${Math.min(100, Math.max(0, l.batterySOC))}%` }} />

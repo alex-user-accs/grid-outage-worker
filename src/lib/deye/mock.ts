@@ -36,9 +36,10 @@ function frame(ts: number): StationDataItem {
   return {
     generationPower: pv,
     consumptionPower: load,
-    gridPower: Math.round(grid),
-    purchasePower: Math.max(0, Math.round(grid)),
-    wirePower: Math.max(0, Math.round(-grid)),
+    // Like the real API for hybrid inverters: signed grid power in wirePower, gridPower/purchasePower empty.
+    gridPower: null,
+    purchasePower: null,
+    wirePower: Math.round(grid),
     batteryPower: Math.round(battery),
     chargePower: Math.max(0, Math.round(-battery)),
     dischargePower: Math.max(0, Math.round(battery)),

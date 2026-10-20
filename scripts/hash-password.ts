@@ -52,5 +52,6 @@ if (mode === "deye") {
   console.log(`\nDEYE_PASSWORD_SHA256=${createHash("sha256").update(pw, "utf8").digest("hex")}`);
 } else {
   if (pw.length < 10) console.warn("Warning: use at least 10 characters.");
-  console.log(`\nADMIN_PASSWORD_HASH='${await hash(pw)}'`);
+  // Next.js expands $VAR in .env even inside quotes, so every $ must be escaped as \$.
+  console.log(`\nADMIN_PASSWORD_HASH=${(await hash(pw)).replaceAll("$", "\\$")}`);
 }

@@ -41,11 +41,15 @@ export const ANNOTATIONS: Record<string, Annotation> = {
   "/v1.0/station/latest": {
     limits: ["Plant-level summaries are cached by Deye and refreshed **at most every 5 min** server-side."],
     cache: "2 min. Polling faster just returns the same data.",
-    notes: ["Power fields are in **W**. `purchasePower`/`wirePower` = grid import/export, `chargePower`/`dischargePower` = battery."],
+    notes: [
+      "Power fields are in **W**.",
+      "Observed on a hybrid inverter: `wirePower` = signed grid power (**+ import, − export**); `gridPower`, `purchasePower`, `chargePower`, `dischargePower` are null.",
+      "`batteryPower`: **+ discharge, − charge**.",
+    ],
   },
   "/v1.0/station/history": {
     limits: [
-      "granularity **1**: `startAt` = `yyyy-MM-dd`; intraday frames for that day (power fields only).",
+      "granularity **1**: `startAt` = `yyyy-MM-dd`; intraday 5-min frames (power fields only). **`endAt` = the same day is required** in practice (else `2101006 invalid param`), despite the docs.",
       "granularity **2**: `startAt`/`endAt` = `yyyy-MM-dd`, `endAt` **exclusive**, range **≤ 31 days**.",
       "granularity **3**: `yyyy-MM`, range **≤ 12 months**.",
       "granularity **4**: `yyyy`; yearly values. Summing all years = lifetime totals (Deye FAQ).",

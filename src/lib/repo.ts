@@ -36,6 +36,21 @@ export function getLatest(): { ts: number; data: StationLatest } | null {
   return id ? snapshot<StationLatest>("station_latest", String(id)) : null;
 }
 
+// Sign conventions, confirmed against live data (inverter TotalGridPower / BatteryCurrent):
+// grid + = import, − = export; battery + = discharge, − = charge.
+// Deye fills `wirePower` (signed grid power) and leaves `gridPower`/`purchasePower` null on hybrid inverters.
+type PowerFields = Pick<StationDataItem, "gridPower" | "wirePower" | "purchasePower" | "batteryPower" | "chargePower" | "dischargePower">;
+
+export function signedGridPower(i: PowerFields): number | null {
+  return i.gridPower ?? i.wirePower ?? i.purchasePower ?? null;
+}
+
+export function signedBatteryPower(i: PowerFields): number | null {
+  if (i.batteryPower != null) return i.batteryPower;
+  if (i.chargePower != null || i.dischargePower != null) return (i.dischargePower ?? 0) - (i.chargePower ?? 0);
+  return null;
+}
+
 export interface PowerPoint {
   t: number;
   pv: number | null;
@@ -53,8 +68,8 @@ export function getTodayCurve(now = Date.now()): PowerPoint[] {
       t: parseDeyeTime(i.timeStamp) ?? 0,
       pv: i.generationPower ?? null,
       load: i.consumptionPower ?? null,
-      grid: i.gridPower ?? null,
-      battery: i.batteryPower ?? null,
+      grid: signedGridPower(i),
+      battery: signedBatteryPower(i),
       soc: i.batterySOC ?? null,
     }))
     .filter((p) => p.t > 0)
