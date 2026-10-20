@@ -1,0 +1,18 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime data (SQLite db, token cache, call log)
+data/
+# fixtures captured from the live API may contain real serials/locations
+tests/fixtures/live/
+
+.DS_Store
+npm-debug.log*

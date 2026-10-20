@@ -1,0 +1,161 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
+import { WorkerBanner } from "@/components/WorkerBanner";
+import { EnergyBars } from "@/components/charts/EnergyBars";
+import { TodayPowerChart } from "@/components/charts/TodayPowerChart";
+import { parseDeyeTime } from "@/lib/dates";
+import { fmtAgo, fmtDateTime, fmtEnergy, fmtPower } from "@/lib/format";
+import { getAlerts, getDaily, getLatest, getLifetime, getMonthly, getStation, getTodayCurve, getWorkerStatus } from "@/lib/repo";
+
+export const dynamic = "force-dynamic";
+
+const LEVEL = ["Notice", "Warning", "Failure"] as const;
+const LEVEL_CLASS = ["good", "warning", "critical"] as const;
+const IMPACT = ["None", "Production", "Safety", "Production & safety"] as const;
+
+function Tile({ label, value, note, color, children }: { label: string; value: string; note?: string; color?: string; children?: React.ReactNode }) {
+  return (
+    <div className="tile">
+      <div className="tile-label">
+        {color && <i className="swatch" style={{ background: color }} />}
+        {label}
+      </div>
+      <div className="tile-value">{value}</div>
+      {children}
+      {note && <div className="tile-note">{note}</div>}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const station = getStation();
+  const latest = getLatest();
+  const daily = getDaily(30);
+  const monthly = getMonthly(12);
+  const lifetime = getLifetime();
+  const alerts = getAlerts(20);
+  const { pause } = getWorkerStatus();
+  const l = latest?.data;
+  const today = daily.at(-1);
+  const updated = parseDeyeTime(l?.lastUpdateTime) ?? latest?.ts ?? null;
+  const openAlerts = alerts.filter((a) => a.status === 1);
+
+  // Import/export and charge/discharge use the dedicated unsigned fields when Deye provides them.
+  const gridIn = l?.purchasePower;
+  const gridOut = l?.wirePower;
+  const gridValue = gridIn != null || gridOut != null ? ((gridIn ?? 0) >= (gridOut ?? 0) ? gridIn : gridOut) : l?.gridPower;
+  const gridNote = gridIn != null || gridOut != null ? ((gridIn ?? 0) >= (gridOut ?? 0) ? "importing" : "exporting") : "as reported";
+  const charging = (l?.chargePower ?? 0) > (l?.dischargePower ?? 0);
+  const batteryValue = l?.chargePower != null || l?.dischargePower != null ? (charging ? l?.chargePower : l?.dischargePower) : l?.batteryPower;
+
+  return (
+    <>
+      <AutoRefresh />
+      <div className="page-head">
+        <div>
+          <h1>{station?.name ?? "Solar station"}</h1>
+          <div className="sub">
+            {station?.installedCapacity ? `${station.installedCapacity} kWp · ` : ""}
+            Last update {fmtDateTime(updated)} ({fmtAgo(updated)})
+          </div>
+        </div>
+        {openAlerts.length > 0 && <span className="badge critical">{openAlerts.length} open alert(s)</span>}
+      </div>
+
+      <WorkerBanner pause={pause} hasData={!!latest} />
+
+      <section className="tiles" aria-label="Live values">
+        <Tile label="Solar" value={fmtPower(l?.generationPower)} color="var(--series-1)" note={station?.installedCapacity ? `of ${station.installedCapacity} kWp` : undefined} />
+        <Tile label="Home load" value={fmtPower(l?.consumptionPower)} color="var(--series-2)" />
+        <Tile label="Grid" value={fmtPower(gridValue)} color="var(--series-3)" note={gridNote} />
+        <Tile label="Battery" value={l?.batterySOC != null ? `${l.batterySOC}%` : "—"} color="var(--series-4)" note={batteryValue ? `${charging ? "charging" : "discharging"} ${fmtPower(batteryValue)}` : "idle"}>
+          {l?.batterySOC != null && (
+            <div className="meter" role="meter" aria-valuenow={l.batterySOC} aria-valuemin={0} aria-valuemax={100} aria-label="Battery state of charge">
+              <span style={{ width: `${Math.min(100, Math.max(0, l.batterySOC))}%` }} />
+            </div>
+          )}
+        </Tile>
+        <Tile label="Generated today" value={fmtEnergy(today?.generation)} note={today ? `used ${fmtEnergy(today.consumption)}` : undefined} />
+        <Tile label="Lifetime generation" value={fmtEnergy(lifetime?.generation)} note={lifetime ? `over ${lifetime.years} year(s)` : undefined} />
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Today’s power</h2>
+          <span className="sub">5-min frames · refreshed every 10 min</span>
+        </div>
+        <TodayPowerChart data={getTodayCurve()} />
+      </section>
+
+      <div className="grid-2">
+        <section className="card">
+          <div className="card-head">
+            <h2>Last 30 days</h2>
+            <span className="sub">daily energy</span>
+          </div>
+          <EnergyBars data={daily} keys={["generation", "consumption"]} tableExtra={["purchase", "feedIn"]} />
+        </section>
+        <section className="card">
+          <div className="card-head">
+            <h2>Last 12 months</h2>
+            <span className="sub">monthly energy</span>
+          </div>
+          <EnergyBars data={monthly} keys={["generation", "consumption", "purchase"]} tableExtra={["feedIn"]} />
+        </section>
+      </div>
+
+      {lifetime && (
+        <section className="tiles" aria-label="Lifetime totals">
+          <Tile label="Lifetime consumption" value={fmtEnergy(lifetime.consumption)} />
+          <Tile label="Lifetime grid purchase" value={fmtEnergy(lifetime.purchase)} />
+          <Tile label="Lifetime grid feed-in" value={fmtEnergy(lifetime.feedIn)} />
+          <Tile
+            label="Self-sufficiency"
+            value={lifetime.consumption ? `${Math.round(Math.max(0, 1 - lifetime.purchase / lifetime.consumption) * 100)}%` : "—"}
+            note="1 − purchase / consumption"
+          />
+        </section>
+      )}
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Alerts</h2>
+          <span className="sub">last 7–30 days · checked every 10 min</span>
+        </div>
+        {alerts.length === 0 ? (
+          <p className="empty">No alerts. 🎉</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Level</th>
+                  <th>Alert</th>
+                  <th>Device</th>
+                  <th>Impact</th>
+                  <th>Started</th>
+                  <th>Ended</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alerts.map((a) => (
+                  <tr key={a.alertId}>
+                    <td>{a.status === 1 ? <span className="badge critical">Open</span> : <span className="badge">Closed</span>}</td>
+                    <td>
+                      <span className={`badge ${LEVEL_CLASS[a.level ?? 0] ?? ""}`}>{LEVEL[a.level ?? 0] ?? a.level}</span>
+                    </td>
+                    <td>{a.alertName ?? a.protocolName ?? a.alertCode}</td>
+                    <td>{a.deviceSn}</td>
+                    <td>{IMPACT[a.impact ?? 0] ?? a.impact}</td>
+                    <td>{fmtDateTime(parseDeyeTime(a.alertStartTime))}</td>
+                    <td>{fmtDateTime(parseDeyeTime(a.alertEndTime))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}

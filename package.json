@@ -1,0 +1,43 @@
+{
+  "name": "deye-cloud-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n web,worker -c blue,green \"next dev\" \"tsx watch src/worker/index.ts\"",
+    "dev:web": "next dev",
+    "worker": "tsx src/worker/index.ts",
+    "build": "next build",
+    "start": "concurrently -n web,worker \"next start\" \"tsx src/worker/index.ts\"",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "hash-password": "tsx scripts/hash-password.ts",
+    "update-spec": "tsx scripts/update-spec.ts",
+    "precommit-check": "node scripts/check-staged.mjs",
+    "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
+    "better-sqlite3": "^13.0.3",
+    "jose": "^6.2.13",
+    "next": "^15.5.28",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
+    "swagger-ui-react": "^5.34.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/swagger-ui-react": "^5.18.0",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
