@@ -104,6 +104,27 @@ scripts/                 hash-password, smoke, update-spec, pre-commit guard
 
 The git pre-commit hook (`.githooks/`, installed by `npm install`) refuses to commit `.env`, `data/` or live fixtures.
 
-## Next: Telegram bot
+## Telegram bot
 
-Add a consumer in the worker that reads `SELECT * FROM events WHERE sent_at IS NULL`, sends each event, and sets `sent_at`. The API layer does not need to change.
+The bot runs inside the worker and only reads the local database, so it adds **no Deye API calls**.
+
+**What it sends:**
+- grid lost or restored, including battery level and a rough estimate of how long the battery will last at the current load;
+- short outages found later in the history;
+- inverter alerts;
+- devices going offline;
+- battery thresholds.
+
+Events are sent about 2 s after the worker queues them. During `NIGHT_HOURS` they arrive without sound (set `TELEGRAM_SILENT_AT_NIGHT=0` to turn that off).
+
+**Commands:** `/status`, `/outages`, `/today`, `/help`.
+
+**Setup:**
+1. In Telegram, open **@BotFather** and send `/newbot`. Copy the token into `TELEGRAM_BOT_TOKEN` in `.env`.
+2. The worker restarts when `.env` changes. Then send `/start` to your new bot. It is private, so it only replies with your chat id.
+3. Put that id into `TELEGRAM_CHAT_IDS`. Separate several ids with commas, for example for family members.
+
+**Behaviour to know about:**
+- Anyone else who writes to the bot gets nothing except their own chat id.
+- Events queued before the bot was first configured are not replayed.
+- Every message is recorded per chat, so a network retry never sends the same message twice.

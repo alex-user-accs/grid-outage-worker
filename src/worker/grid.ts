@@ -28,7 +28,10 @@ interface Point {
   value?: string | number | null;
 }
 
-const num = (v: Point["value"]) => (v === null || v === undefined || v === "" ? null : Number(v));
+const num = (v: Point["value"]) => {
+  const n = v === null || v === undefined || v === "" ? NaN : Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 /** Key names differ per model (e.g. GridVoltageL1L2 on single-phase, GridVoltageL1 on three-phase). */
 export function gridKeys(points: Point[]): string[] {

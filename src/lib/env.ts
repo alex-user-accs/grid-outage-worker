@@ -43,6 +43,23 @@ const authSchema = z.object({
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
 });
 
+const telegramSchema = z.object({
+  TELEGRAM_BOT_TOKEN: z.string().regex(/^\d+:[\w-]{30,}$/, "TELEGRAM_BOT_TOKEN must look like 123456:ABC… (from @BotFather)"),
+  /** Comma-separated chat ids allowed to use the bot. Empty = setup mode (the bot only tells you your chat id). */
+  TELEGRAM_CHAT_IDS: z
+    .string()
+    .default("")
+    .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+    .pipe(z.array(z.string().regex(/^-?\d+$/, "TELEGRAM_CHAT_IDS must be numeric chat ids, comma-separated"))),
+  /** Bot API base URL; only for a proxy or tests. */
+  TELEGRAM_API_URL: z.string().url().default("https://api.telegram.org"),
+  /** Send notifications without sound during NIGHT_HOURS. */
+  TELEGRAM_SILENT_AT_NIGHT: z
+    .string()
+    .optional()
+    .transform((v) => v !== "0" && v !== "false"),
+});
+
 function parse<T extends z.ZodTypeAny>(schema: T, name: string): z.infer<T> {
   const res = schema.safeParse(process.env);
   if (!res.success) {
@@ -58,5 +75,8 @@ export type LimitsEnv = z.infer<typeof limitsSchema>;
 export const deyeEnv = (): DeyeEnv => parse(deyeSchema, "Deye API");
 export const limitsEnv = (): LimitsEnv => parse(limitsSchema, "API limits");
 export const authEnv = () => parse(authSchema, "dashboard auth");
+export type TelegramEnv = z.infer<typeof telegramSchema>;
+/** null when the bot is not configured (no token): the worker then runs without it. */
+export const telegramEnv = (): TelegramEnv | null => (process.env.TELEGRAM_BOT_TOKEN ? parse(telegramSchema, "Telegram") : null);
 export const isMock = (): boolean => flag.parse(process.env.DEYE_MOCK);
 export const dbPath = (): string => process.env.DB_PATH || "data/deye.db";

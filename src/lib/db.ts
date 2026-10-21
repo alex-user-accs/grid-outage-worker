@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS events (
   payload TEXT NOT NULL,
   sent_at INTEGER
 );
+
+-- Per-chat delivery of an event, so a retry never sends the same message twice to a chat.
+CREATE TABLE IF NOT EXISTS event_deliveries (
+  event_id INTEGER NOT NULL,
+  chat_id  TEXT NOT NULL,
+  sent_at  INTEGER NOT NULL,
+  PRIMARY KEY (event_id, chat_id)
+);
 `;
 
 export function openDb(file = dbPath()): DB {

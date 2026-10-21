@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n web,worker -c blue,green \"next dev\" \"tsx watch --include .env src/worker/index.ts\"",
+    "dev": "concurrently -n web,worker -c blue,green \"next dev\" \"node --import tsx --watch-path=./src --watch-path=./.env src/worker/index.ts\"",
     "dev:web": "next dev",
     "worker": "tsx src/worker/index.ts",
     "build": "next build",
@@ -15,7 +15,8 @@
     "hash-password": "tsx scripts/hash-password.ts",
     "update-spec": "tsx scripts/update-spec.ts",
     "precommit-check": "node scripts/check-staged.mjs",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "worker:dev": "node --import tsx --watch-path=./src --watch-path=./.env src/worker/index.ts"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.2",
