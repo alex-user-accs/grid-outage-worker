@@ -3,8 +3,22 @@ import { WorkerBanner } from "@/components/WorkerBanner";
 import { EnergyBars } from "@/components/charts/EnergyBars";
 import { TodayPowerChart } from "@/components/charts/TodayPowerChart";
 import { parseDeyeTime } from "@/lib/dates";
-import { fmtAgo, fmtDateTime, fmtEnergy, fmtPower } from "@/lib/format";
-import { getAlerts, getDaily, getLatest, getLifetime, getMonthly, getStation, getTodayCurve, getWorkerStatus, signedBatteryPower, signedGridPower } from "@/lib/repo";
+import { fmtAgo, fmtDateTime, fmtDuration, fmtEnergy, fmtPower } from "@/lib/format";
+import {
+  getAlerts,
+  getDaily,
+  getGridStatus,
+  getLatest,
+  getLifetime,
+  getMonthly,
+  getOutages,
+  getStation,
+  getTodayCurve,
+  getWorkerStatus,
+  outageMinutes,
+  signedBatteryPower,
+  signedGridPower,
+} from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +52,11 @@ export default function Dashboard() {
   const today = daily.at(-1);
   const updated = parseDeyeTime(l?.lastUpdateTime) ?? latest?.ts ?? null;
   const openAlerts = alerts.filter((a) => a.status === 1);
+  const now = Date.now();
+  const gridStatus = getGridStatus();
+  const outages = getOutages(30, now);
+  const dayStart = new Date(now).setHours(0, 0, 0, 0);
+  const todayOutages = outages.filter((o) => (o.end ?? now) >= dayStart);
 
   const grid = l ? signedGridPower(l) : null;
   const battery = l ? signedBatteryPower(l) : null;
@@ -46,7 +65,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <AutoRefresh />
+      <AutoRefresh everyMs={60_000} />
       <div className="page-head">
         <div>
           <h1>{station?.name ?? "Solar station"}</h1>
@@ -59,6 +78,8 @@ export default function Dashboard() {
       </div>
 
       <WorkerBanner pause={pause} hasData={!!latest} />
+
+      <GridBanner status={gridStatus} />
 
       <section className="tiles" aria-label="Live values">
         <Tile label="Solar" value={fmtPower(l?.generationPower)} color="var(--series-1)" note={station?.installedCapacity ? `of ${station.installedCapacity} kWp` : undefined} />
@@ -80,7 +101,7 @@ export default function Dashboard() {
           <h2>Today’s power</h2>
           <span className="sub">5-min frames · refreshed every 10 min</span>
         </div>
-        <TodayPowerChart data={getTodayCurve()} />
+        <TodayPowerChart data={getTodayCurve()} outages={todayOutages.map((o) => ({ start: Math.max(o.start, dayStart), end: o.end ?? now }))} />
       </section>
 
       <div className="grid-2">
@@ -112,6 +133,44 @@ export default function Dashboard() {
           />
         </section>
       )}
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Grid outages</h2>
+          <span className="sub">from the inverter’s grid voltage · last 30 days</span>
+        </div>
+        <section className="tiles" aria-label="Outage summary">
+          <Tile label="Outages today" value={String(todayOutages.length)} note={`${fmtDuration(outageMinutes(todayOutages, dayStart, now) * 60_000)} without grid`} />
+          <Tile label="Last 7 days" value={String(outages.filter((o) => (o.end ?? now) >= now - 7 * 86_400_000).length)} note={`${fmtDuration(outageMinutes(outages, now - 7 * 86_400_000, now) * 60_000)} without grid`} />
+          <Tile label="Last 30 days" value={String(outages.length)} note={`${fmtDuration(outageMinutes(outages, now - 30 * 86_400_000, now) * 60_000)} without grid`} />
+        </section>
+        {outages.length === 0 ? (
+          <p className="empty">No outages recorded yet.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Grid lost</th>
+                  <th>Restored</th>
+                  <th className="num">Duration</th>
+                  <th>Detected by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {outages.slice(0, 30).map((o) => (
+                  <tr key={o.id}>
+                    <td>{fmtDateTime(o.start)}</td>
+                    <td>{o.end ? fmtDateTime(o.end) : <span className="badge critical">ongoing</span>}</td>
+                    <td className="num">{fmtDuration((o.end ?? now) - o.start)}</td>
+                    <td>{o.source === "live" ? "live" : "history check"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section className="card">
         <div className="card-head">
@@ -154,5 +213,28 @@ export default function Dashboard() {
         )}
       </section>
     </>
+  );
+}
+
+function GridBanner({ status }: { status: ReturnType<typeof getGridStatus> }) {
+  if (status.online === null) return null;
+  const reading = [status.voltage != null ? `${status.voltage} V` : null, status.frequency != null ? `${status.frequency} Hz` : null].filter(Boolean).join(" · ");
+  const checked = status.lastSampleAt ? `inverter sample ${fmtAgo(status.lastSampleAt)}` : "";
+  return status.online ? (
+    <div className="banner good" role="status">
+      <span className="badge good">Grid online</span>
+      <span className="sub">
+        {reading}
+        {status.since ? ` · since ${fmtDateTime(status.since)}` : ""} · {checked}
+      </span>
+    </div>
+  ) : (
+    <div className="banner crit" role="alert">
+      <span className="badge critical">Grid OFF</span>
+      <span>
+        <strong>No grid since {fmtDateTime(status.since)}</strong> ({status.since ? fmtDuration(Date.now() - status.since) : "?"}) · running on battery/PV
+      </span>
+      <span className="sub">{checked}</span>
+    </div>
   );
 }

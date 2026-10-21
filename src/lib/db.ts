@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS alerts (
   updated_at INTEGER NOT NULL
 );
 
+-- Grid outages detected from the inverter's grid voltage/frequency (end NULL = ongoing).
+CREATE TABLE IF NOT EXISTS grid_outages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  start       INTEGER NOT NULL,
+  end         INTEGER,
+  detected_at INTEGER NOT NULL,
+  source      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS grid_outages_start ON grid_outages(start);
+
 -- Notable changes for notifications (future Telegram bot consumes rows where sent_at IS NULL).
 CREATE TABLE IF NOT EXISTS events (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,

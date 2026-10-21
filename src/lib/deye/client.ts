@@ -3,6 +3,7 @@ import { type DB, kvDelete, kvGet, kvSet } from "../db";
 import {
   type DeyeApi,
   type Granularity,
+  deviceHistoryResponse,
   deviceLatestResponse,
   stationAlertResponse,
   stationDeviceResponse,
@@ -147,6 +148,12 @@ export class DeyeClient implements DeyeApi {
       out.push(...res.deviceDataList);
     }
     return out;
+  }
+
+  async deviceHistoryDay(deviceSn: string, day: string, measurePoints: string[]) {
+    // As with station history, Deye needs endAt for granularity 1.
+    const res = await this.request("/v1.0/device/history", { deviceSn, granularity: 1, startAt: day, endAt: day, measurePoints }, deviceHistoryResponse);
+    return res.dataList;
   }
 
   /** Range must be <= 180 days. Pages of 200, at most 5 pages per call. */

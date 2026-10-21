@@ -37,7 +37,12 @@ export default function StatusPage() {
       <WorkerBanner pause={w.pause} hasData />
 
       <section className="tiles">
-        <UsageTile label="Calls today" used={u.today} cap={u.dailyCap} note={`expected ≈ ${fmtInt(u.expectedPerDay)}/day (local cap)`} />
+        <UsageTile
+          label="Calls today"
+          used={u.today}
+          cap={u.dailyCap}
+          note={`expected ≈ ${fmtInt(u.expectedPerDay)}/day · slower ${u.night.startHour}:00–${u.night.endHour}:00`}
+        />
         <UsageTile label="Calls this month" used={u.month} cap={u.monthlyCap} note="Deye base quota ≈ 100,000/month" />
         <div className="tile">
           <div className="tile-label">Last hour</div>
@@ -68,7 +73,10 @@ export default function StatusPage() {
               {w.jobs.map((j) => (
                 <tr key={j.name}>
                   <td>{j.name}</td>
-                  <td>{fmtDuration(j.intervalMs)}</td>
+                  <td>
+                    {j.name === "gridWatch" ? "each upload (~2 min)" : fmtDuration(j.intervalMs)}
+                    {j.nightIntervalMs ? <span className="sub"> · night {fmtDuration(j.nightIntervalMs)}</span> : null}
+                  </td>
                   <td>{fmtAgo(j.state?.lastRun)}</td>
                   <td>{!j.state ? "—" : j.state.ok ? <span className="badge good">OK</span> : <span className="badge critical" title={j.state.error}>{j.state.error?.slice(0, 60)}</span>}</td>
                   <td style={{ whiteSpace: "normal" }}>{j.description}</td>

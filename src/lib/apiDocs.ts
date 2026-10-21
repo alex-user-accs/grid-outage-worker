@@ -2,7 +2,8 @@ import "server-only";
 import spec from "@docs/deye-openapi.json";
 import { ANNOTATIONS, kindOf } from "@docs/annotations";
 import { fmtDuration, fmtInt } from "./format";
-import { JOBS } from "@/worker/jobs";
+import { limitsEnv } from "./env";
+import { JOBS, callsPerDay } from "@/worker/jobs";
 
 type Operation = { summary?: string; description?: string; tags?: string[]; [k: string]: unknown };
 type Spec = { info: Record<string, unknown>; paths: Record<string, Record<string, Operation>>; [k: string]: unknown };
@@ -25,7 +26,8 @@ export function usageByPath(callsToday: Record<string, number>): Map<string, End
   for (const job of JOBS) {
     for (const path of job.endpoints) {
       const u = map.get(path) ?? { path, jobs: [], today: callsToday[path] ?? 0 };
-      u.jobs.push({ name: job.name, every: fmtDuration(job.intervalMs), perMonth: Math.round((30 * 86_400_000) / job.intervalMs) * job.callsPerRun });
+      const every = job.nightIntervalMs ? `${fmtDuration(job.intervalMs)} (night ${fmtDuration(job.nightIntervalMs)})` : fmtDuration(job.intervalMs);
+      u.jobs.push({ name: job.name, every, perMonth: Math.round(callsPerDay(job, limitsEnv().NIGHT_HOURS) * 30) });
       map.set(path, u);
     }
   }

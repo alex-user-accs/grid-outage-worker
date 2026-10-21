@@ -1,6 +1,6 @@
 "use client";
 
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { fmtPower } from "@/lib/format";
 import type { PowerPoint } from "@/lib/repo";
 import { AXIS_TICK, DataTable, Legend, type SeriesDef, makeTooltip } from "./common";
@@ -16,12 +16,13 @@ const SOC: SeriesDef<"soc">[] = [{ key: "soc", label: "Battery SOC", color: "var
 const hhmm = (t: unknown) => new Date(Number(t)).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 const kw = (v: number) => (Math.abs(v) >= 1000 ? `${v / 1000}k` : String(v));
 
-export function TodayPowerChart({ data }: { data: PowerPoint[] }) {
+export function TodayPowerChart({ data, outages = [] }: { data: PowerPoint[]; outages?: { start: number; end: number }[] }) {
   if (!data.length) return <p className="empty">No intraday data yet — the worker fetches it every 10 minutes.</p>;
   const hasSoc = data.some((d) => d.soc != null);
   return (
     <>
       <Legend series={POWER} />
+      {outages.length > 0 && <div className="sub">Shaded: grid outage</div>}
       <div className="chart">
         <ResponsiveContainer>
           <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
@@ -29,6 +30,9 @@ export function TodayPowerChart({ data }: { data: PowerPoint[] }) {
             <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={hhmm} tick={AXIS_TICK} stroke="var(--axis)" minTickGap={40} />
             <YAxis tickFormatter={kw} tick={AXIS_TICK} stroke="var(--axis)" width={56} unit="W" />
             <ReferenceLine y={0} stroke="var(--axis)" />
+            {outages.map((o) => (
+              <ReferenceArea key={o.start} x1={o.start} x2={o.end} fill="var(--critical)" fillOpacity={0.1} stroke="none" ifOverflow="hidden" />
+            ))}
             <Tooltip content={makeTooltip(POWER, hhmm)} cursor={{ stroke: "var(--axis)" }} />
             {POWER.map((s) => (
               <Line key={s.key} dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} type="monotone" isAnimationActive={false} connectNulls />

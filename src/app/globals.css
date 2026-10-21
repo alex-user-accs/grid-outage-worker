@@ -109,6 +109,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 .banner.warn { border-left: 4px solid var(--warning); }
 .banner.crit { border-left: 4px solid var(--critical); }
 .banner.info { border-left: 4px solid var(--accent); }
+.banner.good { border-left: 4px solid var(--good); }
+.banner { align-items: center; flex-wrap: wrap; }
 
 /* ---------- stat tiles ---------- */
 .tiles { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }

@@ -138,6 +138,22 @@ export const stationAlertResponse = baseResponse.extend({
   total: num,
 });
 
+export const deviceHistoryResponse = baseResponse.extend({
+  dataList: z
+    .array(
+      z.looseObject({
+        time: z.union([z.string(), z.number()]).nullish(),
+        itemList: z
+          .array(z.looseObject({ key: z.string(), value: z.union([z.string(), z.number()]).nullish(), unit: z.string().nullish() }))
+          .nullish()
+          .transform((v) => v ?? []),
+      }),
+    )
+    .nullish()
+    .transform((v) => v ?? []),
+});
+export type DeviceHistorySample = z.infer<typeof deviceHistoryResponse>["dataList"][number];
+
 /** granularity: 1 = intraday frames, 2 = days, 3 = months, 4 = years */
 export type Granularity = 1 | 2 | 3 | 4;
 
@@ -149,4 +165,6 @@ export interface DeyeApi {
   stationDevices(stationId: number): Promise<StationDevice[]>;
   deviceLatest(deviceSns: string[]): Promise<DeviceLatestItem[]>;
   stationAlerts(stationId: number, startTs: number, endTs: number): Promise<StationAlert[]>;
+  /** Intraday samples (granularity 1, one per logger upload) of the given measure points for one day. */
+  deviceHistoryDay(deviceSn: string, day: string, measurePoints: string[]): Promise<DeviceHistorySample[]>;
 }

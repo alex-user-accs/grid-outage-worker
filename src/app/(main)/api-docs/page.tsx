@@ -116,8 +116,29 @@ export default function ApiDocsPage() {
         </ul>
       </section>
 
+      <section className="card doc-prose">
+        <h2>5. Grid outage detection</h2>
+        <ul>
+          <li>
+            The app’s Message Center “Grid disconnection / restoration” notifications are <b>not available in the OpenAPI</b>, and they are not
+            alerts: <code>alertList</code> stays empty during outages.
+          </li>
+          <li>
+            We read the inverter’s own measure points instead: without grid, <code>GridVoltage…</code> drops to ~2.7 V and{" "}
+            <code>GridFrequency</code> to 0 Hz (rule: &lt; 100 V or &lt; 40 Hz). Grid power is useless for this, as it is ~0 W whenever the battery covers
+            the load.
+          </li>
+          <li>
+            The logger uploads every <b>120 s</b>; a sample is visible in <code>/device/latest</code> after <b>38–47 s</b>. We poll ~50 s after
+            each upload (phase-locked): one call per sample, outage noticed ~1–3 min after it starts. Night ({u.night.startHour}:00–
+            {u.night.endHour}:00): every 5 min.
+          </li>
+          <li>Hourly, today’s 2-min voltage history fills gaps (night, restarts). Flickers shorter than ~2 min can fall between two samples.</li>
+        </ul>
+      </section>
+
       <section className="card">
-        <h2>5. Endpoint reference</h2>
+        <h2>6. Endpoint reference</h2>
         <p className="sub">✅ = used by this app · ⚠️ = write operation · “Try it out” is disabled.</p>
         <SwaggerView spec={buildAnnotatedSpec(today)} />
       </section>

@@ -1,9 +1,19 @@
-import type { DeyeApi, DeviceLatestItem, Granularity, Station, StationAlert, StationDataItem, StationDevice, StationLatest } from "./types";
+import type { DeviceHistorySample, DeyeApi, DeviceLatestItem, Granularity, Station, StationAlert, StationDataItem, StationDevice, StationLatest } from "./types";
 
 // Deterministic fake data for DEYE_MOCK=1: a ~10 kWp hybrid system with a battery.
 // Lets the UI and worker run end-to-end without spending a single API call.
 
 const STATION_ID = 1001;
+// Like the real logger: one sample every 120 s, visible ~45 s later. A grid outage every day 08:20–09:05.
+const SAMPLE_MS = 120_000;
+const VISIBLE_MS = 45_000;
+const latestSampleAt = (now: number) => Math.floor((now - VISIBLE_MS) / SAMPLE_MS) * SAMPLE_MS;
+
+function gridAt(ts: number): { voltage: string; frequency: string } {
+  const d = new Date(ts);
+  const m = d.getHours() * 60 + d.getMinutes();
+  return m >= 8 * 60 + 20 && m < 9 * 60 + 5 ? { voltage: "2.70", frequency: "0.00" } : { voltage: "229.40", frequency: "50.01" };
+}
 const PEAK_W = 8500;
 
 function pvAt(ts: number): number {
@@ -137,8 +147,10 @@ export class MockDeyeClient implements DeyeApi {
   }
 
   async deviceLatest(sns: string[]): Promise<DeviceLatestItem[]> {
-    const f = frame(this.now());
-    const t = Math.floor(this.now() / 1000);
+    const sampleAt = latestSampleAt(this.now());
+    const f = frame(sampleAt);
+    const g = gridAt(sampleAt);
+    const t = Math.floor(sampleAt / 1000);
     return sns.map((deviceSn) => ({
       deviceSn,
       deviceType: deviceSn.includes("BAT") ? "BATTERY" : "INVERTER",
@@ -155,8 +167,8 @@ export class MockDeyeClient implements DeyeApi {
             { key: "TotalSolarPower", value: String(f.generationPower), unit: "W" },
             { key: "TotalConsumptionPower", value: String(f.consumptionPower), unit: "W" },
             { key: "TotalGridPower", value: String(f.gridPower), unit: "W" },
-            { key: "GridVoltageL1", value: "231.2", unit: "V" },
-            { key: "GridFrequency", value: "50.01", unit: "Hz" },
+            { key: "GridVoltageL1L2", value: g.voltage, unit: "V" },
+            { key: "GridFrequency", value: g.frequency, unit: "Hz" },
             { key: "DCTemperature", value: "41.5", unit: "℃" },
             { key: "DailyActiveProduction", value: "21.4", unit: "kWh" },
           ],
@@ -168,5 +180,19 @@ export class MockDeyeClient implements DeyeApi {
     return [
       { alertId: "mock-1", alertName: "Grid voltage high (mock)", alertCode: "W12", protocolName: "W12", deviceSn: "MOCK-INV-0001", level: 1, impact: 1, status: 0, alertStartTime: t - 86400 * 2, alertEndTime: t - 86400 * 2 + 1200 },
     ];
+  }
+
+  async deviceHistoryDay(_sn: string, day: string, measurePoints: string[]): Promise<DeviceHistorySample[]> {
+    const [y, m, d] = day.split("-").map(Number);
+    const end = Math.min(new Date(y, m - 1, d + 1).getTime(), latestSampleAt(this.now()) + 1);
+    const out: DeviceHistorySample[] = [];
+    for (let ts = new Date(y, m - 1, d).getTime(); ts < end; ts += SAMPLE_MS) {
+      const g = gridAt(ts);
+      out.push({
+        time: String(Math.floor(ts / 1000)),
+        itemList: measurePoints.map((key) => ({ key, value: /Frequency/i.test(key) ? g.frequency : g.voltage, unit: /Frequency/i.test(key) ? "Hz" : "V" })),
+      });
+    }
+    return out;
   }
 }

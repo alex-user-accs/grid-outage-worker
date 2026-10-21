@@ -25,6 +25,15 @@ const limitsSchema = z.object({
   API_MONTHLY_CAP: z.coerce.number().int().min(1).default(90000),
   SOC_LOW: z.coerce.number().min(0).max(100).default(20),
   SOC_HIGH: z.coerce.number().min(0).max(100).default(100),
+  /** Quiet hours with slower polling, local time "start-end" in whole hours. Same start and end disables it. */
+  NIGHT_HOURS: z
+    .string()
+    .regex(/^\d{1,2}-\d{1,2}$/, "NIGHT_HOURS must look like 1-6")
+    .default("1-6")
+    .transform((v) => {
+      const [startHour, endHour] = v.split("-").map(Number);
+      return { startHour: startHour % 24, endHour: endHour % 24 };
+    }),
 });
 
 const authSchema = z.object({

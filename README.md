@@ -8,7 +8,7 @@ Browser ──cookie──> Next.js (SSR pages) ──reads──> SQLite (data/
 
 - **Only the worker talks to Deye.** It uses one rate-limited client, so page views cost zero API calls.
 - **Credentials stay on the server.** They live in `.env` and never reach the browser. The dashboard is protected by a password (argon2) and a signed httpOnly cookie.
-- **Telegram-ready.** The worker writes notable changes (alerts, device offline, SOC thresholds) to an `events` table for a future bot.
+- **Telegram-ready.** The worker writes notable changes (grid lost/restored, alerts, device offline, SOC thresholds) to an `events` table for a future bot.
 
 ## Setup
 
@@ -68,19 +68,26 @@ Deye publishes these limits in its Best Practices and calls them preliminary:
 | Finished days, months and years are fetched once and frozen | — |
 | Job last-run times persist, so restarts don't re-fire jobs | — |
 
-Steady-state budget: **about 1,373 calls per day, roughly 41k per month (41% of the quota)**.
+Steady-state budget: **about 1,230 calls per day, roughly 37k per month (37% of the quota)**. Night hours (`NIGHT_HOURS`, default 01:00–06:00) poll more slowly.
 
-| Job | Interval |
-|---|---|
-| station/latest | 2 min |
-| device/latest | 5 min |
-| today curve | 10 min |
-| alerts | 10 min |
-| energy history | 1 h |
-| device list | 1 h |
-| lifetime | 6 h |
+| Job | Day | Night |
+|---|---|---|
+| gridWatch (`device/latest`, phase-locked) | each 2-min logger upload | 5 min |
+| station/latest | 5 min (Deye caches it 5 min) | 15 min |
+| today curve, alerts | 10 min | 30 min |
+| gridHistory, energy, device list | 1 h | 1 h |
+| lifetime | 6 h | 6 h |
 
 The exact numbers are on the API docs page.
+
+## Grid outage detection
+
+Deye's "Grid disconnection / restoration" notifications exist only in the app's Message Center. They are not in the OpenAPI, and they are not alerts.
+
+- **How it's detected:** we read the inverter's own `GridVoltage…` and `GridFrequency`. An outage reads about 2.7 V and 0 Hz.
+- **Timing:** the logger uploads every 120 s, and a sample is visible about 40 s later. `gridWatch` polls right after each upload, so an outage shows up **about 1–3 min after it starts**.
+- **Gap filling:** every hour, `gridHistory` checks the day's 2-min history and fills gaps from night polling or restarts. Flickers shorter than one sample (~2 min) can be missed.
+- **Results:** outages are stored in `grid_outages` and shown on the dashboard. The `grid_down`, `grid_up` and `grid_outage_missed` events go to the Telegram queue.
 
 ## Layout
 

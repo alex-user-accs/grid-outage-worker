@@ -1,8 +1,9 @@
 import type { DB } from "@/lib/db";
 import { kvGet, kvSet } from "@/lib/db";
 import { addDays, addMonths, parseDeyeTime, ym, ymd } from "@/lib/dates";
-import type { DeyeApi, Granularity, Station, StationDataItem, StationDevice } from "@/lib/deye/types";
+import type { DeviceLatestItem, DeyeApi, Granularity, Station, StationDataItem, StationDevice } from "@/lib/deye/types";
 import { syncAlerts, trackDeviceStatus, trackSoc } from "./events";
+import { SAMPLE_MS, gridKeys, nextLivePoll, readGrid, reconcileGrid, trackGrid } from "./grid";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -16,16 +17,41 @@ export interface JobContext {
   stationIdOverride?: number;
 }
 
+export interface NightWindow {
+  /** Local hour the quiet period starts (inclusive), e.g. 1 for 01:00. */
+  startHour: number;
+  /** Local hour it ends (exclusive), e.g. 6 for 06:00. Equal to startHour disables night mode. */
+  endHour: number;
+}
+
+export const DEFAULT_NIGHT: NightWindow = { startHour: 1, endHour: 6 };
+
+export function isNight(now: number, night: NightWindow | null): boolean {
+  if (!night || night.startHour === night.endHour) return false;
+  const h = new Date(now).getHours();
+  return night.startHour < night.endHour ? h >= night.startHour && h < night.endHour : h >= night.startHour || h < night.endHour;
+}
+
+const nightHours = (night: NightWindow | null) =>
+  !night || night.startHour === night.endHour ? 0 : (night.endHour - night.startHour + 24) % 24;
+
+export type JobResult = void | "skipped" | { nextRun: number };
+
 export interface Job {
   name: string;
   intervalMs: number;
+  /** Slower interval used during the night window (01:00–06:00 by default). */
+  nightIntervalMs?: number;
   /** Deye endpoints this job calls, for the budget table and the API docs page. */
   endpoints: string[];
   /** Typical calls per run in steady state (excludes one-off backfills). */
   callsPerRun: number;
   description: string;
-  /** Returns "skipped" when a prerequisite (e.g. the station id) is missing; the scheduler then retries next tick. */
-  run(ctx: JobContext): Promise<void | "skipped">;
+  /**
+   * Returns "skipped" when a prerequisite (e.g. the station id) is missing; the scheduler then retries next tick.
+   * Returns { nextRun } to choose its own next run time (daytime only; at night nightIntervalMs wins).
+   */
+  run(ctx: JobContext): Promise<JobResult>;
 }
 
 export function saveSnapshot(db: DB, kind: string, ref: string, data: unknown, ts = Date.now()): void {
@@ -49,6 +75,20 @@ function isFinal(db: DB, stationId: number, g: Granularity, period: string): boo
 }
 
 const stationId = (db: DB) => kvGet<number>(db, "station_id");
+
+function stationDevices(db: DB): StationDevice[] | null {
+  const id = stationId(db);
+  const row = id ? (db.prepare("SELECT json FROM snapshots WHERE kind = 'devices' AND ref = ?").get(String(id)) as { json: string } | undefined) : undefined;
+  return row ? (JSON.parse(row.json) as StationDevice[]) : null;
+}
+
+/** The device whose grid readings we watch: the (first) inverter. */
+const gridDevice = (devices: StationDevice[]) =>
+  devices.find((d) => d.deviceType === "INVERTER") ?? devices.find((d) => d.deviceType !== "COLLECTOR");
+
+const LIVE_SAMPLE_KEY = "live_sample_at";
+const GRID_KEYS_KEY = "grid_measure_points";
+const GRID_HISTORY_DAY_KEY = "grid_history_day";
 
 export const JOBS: Job[] = [
   {
@@ -80,11 +120,66 @@ export const JOBS: Job[] = [
     },
   },
   {
+    name: "gridWatch",
+    intervalMs: SAMPLE_MS,
+    nightIntervalMs: 5 * MIN,
+    endpoints: ["/v1.0/device/latest"],
+    callsPerRun: 1,
+    description:
+      "Grid watch + device readings: polls right after each 2-min logger upload (phase-locked) to detect grid loss within ~1–3 min. 5 min at night.",
+    async run({ db, api, now }) {
+      const devices = stationDevices(db);
+      if (!devices) return "skipped";
+      const sns = devices.filter((d) => d.deviceType !== "COLLECTOR").map((d) => d.deviceSn);
+      if (!sns.length) return;
+      const items = await api.deviceLatest(sns);
+      for (const item of items) saveSnapshot(db, "device_latest", item.deviceSn, item, now);
+
+      const watched = gridDevice(devices);
+      const item: DeviceLatestItem | undefined = items.find((i) => i.deviceSn === watched?.deviceSn);
+      const sampleAt = parseDeyeTime(item?.collectionTime);
+      if (!item || !sampleAt) return;
+      const grid = readGrid(item.dataList);
+      if (grid.online !== null) trackGrid(db, sampleAt, grid.online, now);
+      const keys = gridKeys(item.dataList);
+      if (keys.length) kvSet(db, GRID_KEYS_KEY, keys);
+
+      const prev = kvGet<number>(db, LIVE_SAMPLE_KEY);
+      kvSet(db, LIVE_SAMPLE_KEY, Math.max(prev ?? 0, sampleAt));
+      return { nextRun: nextLivePoll(prev, sampleAt, now) };
+    },
+  },
+  {
+    name: "gridHistory",
+    intervalMs: HOUR,
+    endpoints: ["/v1.0/device/history"],
+    callsPerRun: 1,
+    description: "Checks today's 2-min grid voltage history for outages live polling missed (night, restarts). Yesterday once after midnight.",
+    async run({ db, api, now }) {
+      const devices = stationDevices(db);
+      const keys = kvGet<string[]>(db, GRID_KEYS_KEY);
+      const watched = devices && gridDevice(devices);
+      if (!watched || !keys?.length) return "skipped";
+      const today = ymd(new Date(now));
+      const lastDay = kvGet<string>(db, GRID_HISTORY_DAY_KEY);
+      const days = lastDay !== today ? [ymd(addDays(new Date(now), -1)), today] : [today];
+      for (const day of days) {
+        const samples = (await api.deviceHistoryDay(watched.deviceSn, day, keys))
+          .map((s) => ({ t: parseDeyeTime(s.time) ?? 0, online: readGrid(s.itemList).online }))
+          .filter((s): s is { t: number; online: boolean } => s.t > 0 && s.online !== null);
+        // The very first run backfills history: record old outages without notifying.
+        reconcileGrid(db, samples, now, lastDay !== undefined);
+      }
+      kvSet(db, GRID_HISTORY_DAY_KEY, today);
+    },
+  },
+  {
     name: "stationLatest",
-    intervalMs: 2 * MIN,
+    intervalMs: 5 * MIN,
+    nightIntervalMs: 15 * MIN,
     endpoints: ["/v1.0/station/latest"],
     callsPerRun: 1,
-    description: "Live power flow: PV, load, grid, battery, SOC.",
+    description: "Live power flow tiles: PV, load, grid, battery, SOC. Deye refreshes this summary at most every 5 min.",
     async run({ db, api, now, socLow, socHigh }) {
       const id = stationId(db);
       if (!id) return "skipped";
@@ -94,25 +189,9 @@ export const JOBS: Job[] = [
     },
   },
   {
-    name: "deviceLatest",
-    intervalMs: 5 * MIN,
-    endpoints: ["/v1.0/device/latest"],
-    callsPerRun: 1,
-    description: "Raw measure points of every non-logger device, batched 10 SNs per call.",
-    async run({ db, api, now }) {
-      const id = stationId(db);
-      if (!id) return "skipped";
-      const row = db.prepare("SELECT json FROM snapshots WHERE kind = 'devices' AND ref = ?").get(String(id)) as { json: string } | undefined;
-      if (!row) return "skipped";
-      const devices: StationDevice[] = JSON.parse(row.json);
-      const sns = devices.filter((d) => d.deviceType !== "COLLECTOR").map((d) => d.deviceSn);
-      if (!sns.length) return;
-      for (const item of await api.deviceLatest(sns)) saveSnapshot(db, "device_latest", item.deviceSn, item, now);
-    },
-  },
-  {
     name: "todayCurve",
     intervalMs: 10 * MIN,
+    nightIntervalMs: 30 * MIN,
     endpoints: ["/v1.0/station/history"],
     callsPerRun: 1,
     description: "Intraday power frames for today (granularity 1). Yesterday is fetched once more after midnight, then frozen.",
@@ -131,6 +210,7 @@ export const JOBS: Job[] = [
   {
     name: "alerts",
     intervalMs: 10 * MIN,
+    nightIntervalMs: 30 * MIN,
     endpoints: ["/v1.0/station/alertList"],
     callsPerRun: 1,
     description: "Alerts of the last 7 days (30 days on first run), to catch new and closed alerts.",
@@ -184,7 +264,14 @@ export const JOBS: Job[] = [
   },
 ];
 
+/** Expected steady-state calls per day for one job, honouring the night window (excludes late-sample retries). */
+export function callsPerDay(job: Job, night: NightWindow | null = DEFAULT_NIGHT): number {
+  const nightMs = (job.nightIntervalMs ? nightHours(night) : 0) * HOUR;
+  const dayMs = 24 * HOUR - nightMs;
+  return (dayMs / job.intervalMs + (job.nightIntervalMs ? nightMs / job.nightIntervalMs : 0)) * job.callsPerRun;
+}
+
 /** Expected steady-state calls per day for a job list (used by docs, status page and tests). */
-export function expectedCallsPerDay(jobs: Job[] = JOBS): number {
-  return jobs.reduce((n, j) => n + (86_400_000 / j.intervalMs) * j.callsPerRun, 0);
+export function expectedCallsPerDay(jobs: Job[] = JOBS, night: NightWindow | null = DEFAULT_NIGHT): number {
+  return jobs.reduce((n, j) => n + callsPerDay(j, night), 0);
 }

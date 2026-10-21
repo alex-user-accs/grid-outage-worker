@@ -4,7 +4,7 @@ import { BudgetExceededError } from "@/lib/deye/client";
 import { MockDeyeClient } from "@/lib/deye/mock";
 import type { DeyeApi } from "@/lib/deye/types";
 import { pushEvent, syncAlerts, trackDeviceStatus, trackSoc } from "@/worker/events";
-import { JOBS, expectedCallsPerDay } from "@/worker/jobs";
+import { DEFAULT_NIGHT, JOBS, expectedCallsPerDay, isNight } from "@/worker/jobs";
 import { PAUSE_KEY, Scheduler, jobKey, retryDelay } from "@/worker/scheduler";
 import { signedBatteryPower, signedGridPower } from "@/lib/repo";
 
@@ -26,13 +26,22 @@ function counting(now: () => number) {
   return { api, counts, total: () => Object.values(counts).reduce((a, b) => a + b, 0) };
 }
 
-const opts = { socLow: 20, socHigh: 100, log: () => {} };
+const opts = { socLow: 20, socHigh: 100, night: DEFAULT_NIGHT, log: () => {} };
 
 describe("worker schedule", () => {
-  it("documents ~1,373 calls/day ≈ 41k/month (≈41% of the 100k quota)", () => {
-    const perDay = expectedCallsPerDay();
-    expect(Math.round(perDay)).toBe(1373);
-    expect(perDay * 30).toBeLessThan(45_000);
+  it("documents ~1,227 calls/day ≈ 37k/month with night mode 01–06 (≈37% of the 100k quota)", () => {
+    const perDay = expectedCallsPerDay(JOBS, DEFAULT_NIGHT);
+    expect(Math.round(perDay)).toBe(1227);
+    expect(perDay * 30).toBeLessThan(40_000);
+    // Without night mode it would cost noticeably more.
+    expect(expectedCallsPerDay(JOBS, null)).toBeGreaterThan(perDay + 150);
+  });
+
+  it("isNight handles normal and wrapping windows", () => {
+    const at = (h: number) => new Date(2026, 9, 21, h, 30).getTime();
+    expect([0, 1, 5, 6].map((h) => isNight(at(h), DEFAULT_NIGHT))).toEqual([false, true, true, false]);
+    expect([22, 23, 0, 6, 7].map((h) => isNight(at(h), { startHour: 23, endHour: 7 }))).toEqual([false, true, true, true, false]);
+    expect(isNight(at(3), { startHour: 0, endHour: 0 })).toBe(false);
   });
 
   it("a simulated day makes about as many calls as budgeted, never above the daily cap", async () => {
@@ -41,12 +50,26 @@ describe("worker schedule", () => {
     const c = counting(() => t);
     const s = new Scheduler(db, c.api, JOBS, opts);
     const end = t + 86_400_000;
-    for (; t < end; t += 60_000) await s.tick(t); // all intervals are whole minutes
-    // Steady state ≈ 1373 + one-off backfills (previous month / previous year) on the first run.
-    expect(c.total()).toBeGreaterThan(1300);
-    expect(c.total()).toBeLessThan(1450);
-    expect(c.counts.stationLatest).toBe(720);
-  });
+    for (; t < end; t += 10_000) await s.tick(t);
+    // Steady state ≈ 1227 + one-off backfills (previous month/year, yesterday's grid history) on the first run.
+    expect(c.total()).toBeGreaterThan(1180);
+    expect(c.total()).toBeLessThan(1320);
+    // 19 h × 12 + 5 h × 4 = 248, plus at most one extra run at each day/night boundary.
+    expect(c.counts.stationLatest).toBeGreaterThanOrEqual(248);
+    expect(c.counts.stationLatest).toBeLessThanOrEqual(250);
+    // gridWatch: one call per 2-min upload by day, 12/h at night.
+    expect(c.counts.deviceLatest).toBeGreaterThan(600);
+    expect(c.counts.deviceLatest).toBeLessThan(660);
+    // The mock's daily outage 08:20–09:05 is detected live, within ~3 min, and closed.
+    const events = db.prepare("SELECT type, payload FROM events WHERE type LIKE 'grid%'").all() as { type: string; payload: string }[];
+    expect(events.map((e) => e.type)).toEqual(["grid_down", "grid_up"]);
+    const down = JSON.parse(events[0].payload);
+    expect(new Date(down.start).getHours() * 60 + new Date(down.start).getMinutes()).toBe(8 * 60 + 20);
+    expect(down.delaySec).toBeLessThanOrEqual(3 * 60);
+    // Real duration 45 min; measured from 2-min samples, so up to one sample longer.
+    expect(JSON.parse(events[1].payload).durationMin).toBeGreaterThanOrEqual(45);
+    expect(JSON.parse(events[1].payload).durationMin).toBeLessThanOrEqual(47);
+  }, 20_000);
 
   it("does not re-fire jobs after a restart (last runs persist in SQLite)", async () => {
     const db = openDb(":memory:");

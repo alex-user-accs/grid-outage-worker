@@ -40,7 +40,7 @@ export const ANNOTATIONS: Record<string, Annotation> = {
   "/v1.0/station/detail": { notes: ["Not used: `/station/list` already returns what the dashboard shows."] },
   "/v1.0/station/latest": {
     limits: ["Plant-level summaries are cached by Deye and refreshed **at most every 5 min** server-side."],
-    cache: "2 min. Polling faster just returns the same data.",
+    cache: "5 min (15 min at night). Deye refreshes this summary at most every 5 min, so faster polling is wasted.",
     notes: [
       "Power fields are in **W**.",
       "Observed on a hybrid inverter: `wirePower` = signed grid power (**+ import, − export**); `gridPower`, `purchasePower`, `chargePower`, `dischargePower` are null.",
@@ -65,12 +65,21 @@ export const ANNOTATIONS: Record<string, Annotation> = {
     notes: ["`level`: 0 notice, 1 warning, 2 failure. `impact`: 0 none, 1 production, 2 safety, 3 both. `status`: 1 open, 0 closed."],
   },
   "/v1.0/device/latest": {
-    limits: ["Up to **10 device SNs** per call; batch them instead of one call per device."],
-    cache: "5 min (loggers upload every 1–5 min).",
+    limits: [
+      "Up to **10 device SNs** per call; batch them instead of one call per device.",
+      "Measured: our logger uploads every **120 s**; a sample becomes visible here **38–47 s** after its `collectionTime`.",
+    ],
+    cache: "Phase-locked: one poll ~50 s after each upload (retry +20 s if late) for grid-outage detection; 5 min at night.",
     notes: ["`deviceState`: 1 online, 2 alert, 3 offline. Values come as strings with a `unit`."],
   },
   "/v1.0/device/measurePoints": { notes: ["Lists measure-point names for `/device/history` gran 1. Static per model: cache indefinitely."] },
-  "/v1.0/device/history": { limits: ["Same granularity rules as `/station/history`; gran 1 requires `measurePoints`."] },
+  "/v1.0/device/history": {
+    limits: [
+      "Same granularity rules as `/station/history`; gran 1 requires `measurePoints` and, in practice, `endAt` = `startAt`.",
+      "Gran 1 returns one sample per logger upload (every 120 s on our logger).",
+    ],
+    cache: "Today's grid voltage/frequency, hourly: fills outage gaps live polling missed.",
+  },
   "/v1.0/device/historyRaw": { limits: ["Timestamps in seconds; range **≤ 5 days**."] },
   "/v1.0/device/alertList": { limits: ["Range **≤ 30 days**."], notes: ["Not used: `/station/alertList` covers all devices in one call."] },
   "/v1.0/device/list": { notes: ["Business members only."] },

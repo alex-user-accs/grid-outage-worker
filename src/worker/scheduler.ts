@@ -2,7 +2,7 @@ import type { DB } from "@/lib/db";
 import { kvDelete, kvGet, kvSet } from "@/lib/db";
 import { BudgetExceededError, startOfLocalDay, startOfLocalMonth } from "@/lib/deye/client";
 import type { DeyeApi } from "@/lib/deye/types";
-import type { Job, JobContext } from "./jobs";
+import { type Job, type JobContext, type NightWindow, isNight } from "./jobs";
 
 export interface JobState {
   lastRun: number;
@@ -12,6 +12,8 @@ export interface JobState {
   error?: string;
   /** Consecutive failures, drives the retry backoff. */
   failures?: number;
+  /** Whether nextRun was planned with the night interval. */
+  night?: boolean;
   durationMs: number;
 }
 
@@ -44,7 +46,11 @@ export class Scheduler {
     private readonly db: DB,
     private readonly api: DeyeApi,
     private readonly jobs: Job[],
-    private readonly opts: Pick<JobContext, "socLow" | "socHigh" | "stationIdOverride"> & { log?: (m: string) => void },
+    private readonly opts: Pick<JobContext, "socLow" | "socHigh" | "stationIdOverride"> & {
+      /** Quiet hours with slower polling; null disables. */
+      night?: NightWindow | null;
+      log?: (m: string) => void;
+    },
   ) {}
 
   private log(m: string) {
@@ -61,18 +67,26 @@ export class Scheduler {
         kvDelete(this.db, PAUSE_KEY);
         this.log("budget window reset; resuming");
       }
+      const night = isNight(now, this.opts.night ?? null);
       for (const job of this.jobs) {
+        const interval = night && job.nightIntervalMs ? job.nightIntervalMs : job.intervalMs;
         const state = kvGet<JobState>(this.db, jobKey(job.name));
-        if (state && now < (state.nextRun ?? state.lastRun + job.intervalMs)) continue;
+        const planned = state ? (state.nextRun ?? state.lastRun + interval) : now;
+        // Leaving the night window: don't keep waiting on the long night interval.
+        const due = state && !!state.night !== night ? Math.min(planned, state.lastRun + interval) : planned;
+        if (now < due) continue;
         const started = Date.now();
         try {
-          if ((await job.run({ db: this.db, api: this.api, now, ...this.opts })) === "skipped") continue;
-          kvSet(this.db, jobKey(job.name), { lastRun: now, nextRun: now + job.intervalMs, ok: true, failures: 0, durationMs: Date.now() - started } satisfies JobState);
+          const result = await job.run({ db: this.db, api: this.api, now, ...this.opts });
+          if (result === "skipped") continue;
+          // A job may pick its own next run (gridWatch phase-locks to logger uploads), but not at night.
+          const nextRun = typeof result === "object" && !(night && job.nightIntervalMs) ? result.nextRun : now + interval;
+          kvSet(this.db, jobKey(job.name), { lastRun: now, nextRun, ok: true, failures: 0, night, durationMs: Date.now() - started } satisfies JobState);
         } catch (err) {
           const message = (err as Error).message;
           const failures = (state?.ok === false ? (state.failures ?? 1) : 0) + 1;
-          const nextRun = now + retryDelay(failures, job.intervalMs);
-          kvSet(this.db, jobKey(job.name), { lastRun: now, nextRun, ok: false, error: message, failures, durationMs: Date.now() - started } satisfies JobState);
+          const nextRun = now + retryDelay(failures, interval);
+          kvSet(this.db, jobKey(job.name), { lastRun: now, nextRun, ok: false, error: message, failures, night, durationMs: Date.now() - started } satisfies JobState);
           if (err instanceof BudgetExceededError) {
             const until = err.scope === "monthly" ? nextMonth(now) : nextDay(now);
             kvSet(this.db, PAUSE_KEY, { reason: message, until } satisfies PauseState);

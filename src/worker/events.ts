@@ -5,7 +5,16 @@ import type { StationAlert, StationDevice } from "@/lib/deye/types";
 // Notable changes are written to the `events` table. The future Telegram bot
 // reads rows where sent_at IS NULL, sends them, and stamps sent_at.
 
-export type EventType = "alert_opened" | "alert_closed" | "device_offline" | "device_online" | "soc_low" | "soc_high";
+export type EventType =
+  | "alert_opened"
+  | "alert_closed"
+  | "device_offline"
+  | "device_online"
+  | "soc_low"
+  | "soc_high"
+  | "grid_down"
+  | "grid_up"
+  | "grid_outage_missed";
 
 export function pushEvent(db: DB, type: EventType, payload: Record<string, unknown>, ts = Date.now()): void {
   db.prepare("INSERT INTO events(ts, type, payload) VALUES (?, ?, ?)").run(ts, type, JSON.stringify(payload));

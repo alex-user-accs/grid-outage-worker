@@ -5,6 +5,7 @@ import { RATE_HEADERS_KEY, countCallsSince, startOfLocalDay, startOfLocalMonth }
 import type { DeviceLatestItem, Station, StationAlert, StationDataItem, StationDevice, StationLatest } from "./deye/types";
 import { limitsEnv } from "./env";
 import { JOBS, expectedCallsPerDay } from "@/worker/jobs";
+import { GRID_STATE_KEY, readGrid } from "@/worker/grid";
 import { PAUSE_KEY, type JobState, type PauseState, jobKey } from "@/worker/scheduler";
 
 // Read-only helpers for server components. Pages never call the Deye API;
@@ -167,7 +168,8 @@ export function getUsage(now = Date.now()) {
     dailyCap: l.API_DAILY_CAP,
     monthlyCap: l.API_MONTHLY_CAP,
     qpm: l.API_QPM,
-    expectedPerDay: Math.round(expectedCallsPerDay()),
+    expectedPerDay: Math.round(expectedCallsPerDay(JOBS, l.NIGHT_HOURS)),
+    night: l.NIGHT_HOURS,
     perEndpoint,
     recent,
   };
@@ -177,7 +179,13 @@ export function getWorkerStatus() {
   const d = db();
   return {
     pause: kvGet<PauseState>(d, PAUSE_KEY) ?? null,
-    jobs: JOBS.map((j) => ({ name: j.name, intervalMs: j.intervalMs, description: j.description, state: kvGet<JobState>(d, jobKey(j.name)) ?? null })),
+    jobs: JOBS.map((j) => ({
+      name: j.name,
+      intervalMs: j.intervalMs,
+      nightIntervalMs: j.nightIntervalMs ?? null,
+      description: j.description,
+      state: kvGet<JobState>(d, jobKey(j.name)) ?? null,
+    })),
     token: kvGet<{ expiresAt: number }>(d, "deye_token")?.expiresAt ?? null,
     rateHeaders: kvGet<{ ts: number; headers: Record<string, string> }>(d, RATE_HEADERS_KEY) ?? null,
   };
@@ -198,4 +206,50 @@ export function getTodayCallsByEndpoint(now = Date.now()): Record<string, number
     .prepare("SELECT endpoint, COUNT(*) AS n FROM api_calls WHERE ts >= ? GROUP BY endpoint")
     .all(startOfLocalDay(now)) as { endpoint: string; n: number }[];
   return Object.fromEntries(rows.map((r) => [r.endpoint, r.n]));
+}
+
+// ---------- grid ----------
+
+export interface GridStatus {
+  online: boolean | null;
+  /** First sample of the current state (e.g. when the outage began). */
+  since: number | null;
+  lastSampleAt: number | null;
+  voltage: number | null;
+  frequency: number | null;
+}
+
+export function getGridStatus(): GridStatus {
+  const state = kvGet<{ online: boolean; since: number; lastSampleAt: number }>(db(), GRID_STATE_KEY);
+  const devices = getDevices()?.devices ?? [];
+  const inverter = devices.find((x) => x.deviceType === "INVERTER") ?? devices.find((x) => x.latest);
+  const reading = inverter?.latest ? readGrid(inverter.latest.data.dataList) : null;
+  const online = state?.online ?? reading?.online ?? null;
+  // While online, "since" is the end of the last outage (live state only knows when monitoring started).
+  const lastEnd = (db().prepare("SELECT MAX(end) AS end FROM grid_outages").get() as { end: number | null }).end;
+  return {
+    online,
+    since: online && lastEnd ? lastEnd : (state?.since ?? null),
+    lastSampleAt: state?.lastSampleAt ?? null,
+    voltage: reading?.voltage ?? null,
+    frequency: reading?.frequency ?? null,
+  };
+}
+
+export interface Outage {
+  id: number;
+  start: number;
+  end: number | null;
+  source: string;
+}
+
+export function getOutages(days = 30, now = Date.now()): Outage[] {
+  return db()
+    .prepare("SELECT id, start, end, source FROM grid_outages WHERE end IS NULL OR end >= ? ORDER BY start DESC")
+    .all(now - days * 86_400_000) as Outage[];
+}
+
+/** Total minutes without grid, clipped to [from, now]. */
+export function outageMinutes(outages: Outage[], from: number, now = Date.now()): number {
+  return Math.round(outages.reduce((n, o) => n + Math.max(0, Math.min(o.end ?? now, now) - Math.max(o.start, from)), 0) / 60_000);
 }
