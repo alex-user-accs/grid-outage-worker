@@ -35,7 +35,28 @@ Fill in `DEYE_APP_ID`, `DEYE_APP_SECRET` (from the developer portal → your app
 | `npm test` | Unit tests. They use a fake `fetch` and make no real calls |
 | `npm run update-spec` | Re-downloads Deye's Swagger spec and diffs it (`-- --write` to save) |
 
-When serving over plain HTTP on a LAN in production, set `INSECURE_COOKIE=1`. Otherwise the session cookie requires HTTPS.
+The session cookie is marked `Secure` only on HTTPS requests, so logging in over plain `http://` on your LAN works.
+
+## Run 24/7 on a Mac (lid closed)
+
+1. **Move the project out of Desktop, Documents and Downloads.** macOS blocks background services from those folders: they fail with "Operation not permitted". For example: `mv ~/Desktop/Projects/deye-cloud-app-hnenn ~/Projects/deye-cloud-app`.
+2. **Stop `npm run dev`**, then run `npm run service:install`. It builds the app and installs two `launchd` agents, web and worker. They start at login and restart automatically on a crash.
+3. **Keep the Mac awake with the lid closed:** run `sudo pmset -a disablesleep 1`. To undo it, run `sudo pmset -a disablesleep 0`. This setting also applies on battery, so don't put the closed laptop in a bag while it's on.
+4. **Return after reboots:** turn on System Settings → Users & Groups → *Automatically log in as …*. The agents start at login.
+5. **Power the router and ISP equipment from the inverter's backup output.** Without internet during an outage, the Deye logger cannot upload data and Telegram cannot deliver, so no outage message arrives.
+
+| Command | |
+|---|---|
+| `npm run service:status` | state, web check, LAN URL, sleep setting |
+| `npm run service:logs` | follow `~/Library/Logs/deye-dashboard/{web,worker}.log` |
+| `npm run service:restart` | restart after a `.env` change |
+| `npm run service:install` | rebuild and reinstall after code changes |
+| `npm run service:stop` / `service:start` | e.g. before `npm run dev`. The worker refuses to run twice |
+| `npm run service:uninstall` | remove the agents |
+
+The dashboard is reachable from other devices on your network at `http://<mac-name>.local:3000`.
+
+After any gap of 10 minutes or more (sleep, crash, reboot), Telegram tells you that monitoring resumed. The hourly history check then recovers outages that happened during the gap.
 
 ## Pages
 
@@ -117,7 +138,12 @@ The bot runs inside the worker and only reads the local database, so it adds **n
 
 Events are sent about 2 s after the worker queues them. During `NIGHT_HOURS` they arrive without sound (set `TELEGRAM_SILENT_AT_NIGHT=0` to turn that off).
 
-**Commands:** `/status`, `/outages`, `/today`, `/help`.
+**Commands:** `/status`, `/outages`, `/today`, `/lang`, `/help`.
+
+**Language:** Ukrainian or English, chosen per chat.
+- `/lang` toggles between them; `/lang uk` or `/lang en` sets one directly.
+- A new chat starts in its Telegram app's language. If that isn't one of the two, it uses `TELEGRAM_LANGUAGE` (default `uk`).
+- The command menu is registered in both languages, so each person sees it in their app's language.
 
 **Setup:**
 1. In Telegram, open **@BotFather** and send `/newbot`. Copy the token into `TELEGRAM_BOT_TOKEN` in `.env`.

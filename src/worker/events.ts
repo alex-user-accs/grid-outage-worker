@@ -14,7 +14,8 @@ export type EventType =
   | "soc_high"
   | "grid_down"
   | "grid_up"
-  | "grid_outage_missed";
+  | "grid_outage_missed"
+  | "monitoring_resumed";
 
 export function pushEvent(db: DB, type: EventType, payload: Record<string, unknown>, ts = Date.now()): void {
   db.prepare("INSERT INTO events(ts, type, payload) VALUES (?, ?, ?)").run(ts, type, JSON.stringify(payload));

@@ -11,7 +11,10 @@ const failures = new Map<string, { n: number; first: number }>();
 const WINDOW_MS = 15 * 60_000;
 
 export async function login(_prev: string | null, form: FormData): Promise<string | null> {
-  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0].trim() || "local";
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0].trim() || "local";
+  // Secure cookies are dropped over plain http (e.g. http://mac.local:3000 from a phone), so only set it on https.
+  const https = h.get("x-forwarded-proto") === "https" || (h.get("origin") ?? "").startsWith("https://");
   const f = failures.get(ip);
   if (f && Date.now() - f.first < WINDOW_MS && f.n >= 5) return "Too many attempts. Try again in 15 minutes.";
 
@@ -28,7 +31,7 @@ export async function login(_prev: string | null, form: FormData): Promise<strin
   (await cookies()).set(SESSION_COOKIE, await createSession(), {
     httpOnly: true,
     sameSite: "strict",
-    secure: process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIE !== "1",
+    secure: https,
     path: "/",
     maxAge: SESSION_TTL_S,
   });

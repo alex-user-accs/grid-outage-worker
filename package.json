@@ -16,7 +16,14 @@
     "update-spec": "tsx scripts/update-spec.ts",
     "precommit-check": "node scripts/check-staged.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
-    "worker:dev": "node --import tsx --watch-path=./src --watch-path=./.env src/worker/index.ts"
+    "worker:dev": "node --import tsx --watch-path=./src --watch-path=./.env src/worker/index.ts",
+    "service:install": "bash scripts/macos/service.sh install",
+    "service:uninstall": "bash scripts/macos/service.sh uninstall",
+    "service:start": "bash scripts/macos/service.sh start",
+    "service:stop": "bash scripts/macos/service.sh stop",
+    "service:restart": "bash scripts/macos/service.sh restart",
+    "service:status": "bash scripts/macos/service.sh status",
+    "service:logs": "bash scripts/macos/service.sh logs"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.2",

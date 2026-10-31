@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { type DB, kvGet, openDb } from "@/lib/db";
+import { type DB, kvGet, kvSet, openDb } from "@/lib/db";
 import { TelegramApi, TelegramError, type TgUpdate } from "@/telegram/api";
 import { CommandBot, Notifier } from "@/telegram/bot";
-import { esc, formatEvent, hm } from "@/telegram/format";
+import { esc, formatEvent, hm, statusText } from "@/telegram/format";
+import type { Lang } from "@/telegram/i18n";
 import { pushEvent } from "@/worker/events";
 import { saveSnapshot } from "@/worker/jobs";
 
@@ -54,7 +55,16 @@ function fakeTg() {
   return { tg, sent, failWith: (e: TelegramError | null) => failures.push(e), queueUpdates: (u: TgUpdate[]) => (updates = u) };
 }
 
-const opts = (chatIds: string[], now = T + 60_000) => ({ chatIds, night: { startHour: 1, endHour: 6 }, silentAtNight: true, log: () => {}, now: () => now });
+const opts = (chatIds: string[], now = T + 60_000, defaultLang: Lang = "en") => ({
+  chatIds,
+  night: { startHour: 1, endHour: 6 },
+  silentAtNight: true,
+  defaultLang,
+  log: () => {},
+  now: () => now,
+});
+/** Event-delivery tests start with their chats already welcomed, so only event messages are counted. */
+const welcomed = (...chats: string[]) => kvSet(db, "telegram_welcomed_chats", chats);
 const unsent = () => (db.prepare("SELECT COUNT(*) AS n FROM events WHERE sent_at IS NULL").get() as { n: number }).n;
 
 describe("message formatting", () => {
@@ -86,6 +96,7 @@ describe("message formatting", () => {
 
 describe("Notifier", () => {
   it("delivers queued events to every allowed chat, once", async () => {
+    welcomed("111", "222");
     seedInverter();
     pushEvent(db, "grid_down", { start: T, delaySec: 50 }, T + 50_000);
     const { tg, sent } = fakeTg();
@@ -97,6 +108,7 @@ describe("Notifier", () => {
   });
 
   it("retries after a network error without re-sending to chats that already got it", async () => {
+    welcomed("111", "222");
     pushEvent(db, "soc_low", { soc: 18, threshold: 20 }, T);
     const { tg, sent, failWith } = fakeTg();
     let now = T + 60_000;
@@ -113,6 +125,7 @@ describe("Notifier", () => {
   });
 
   it("honours 429 retry_after and skips chats that blocked the bot", async () => {
+    welcomed("111");
     pushEvent(db, "soc_low", { soc: 18, threshold: 20 }, T);
     const { tg, sent, failWith } = fakeTg();
     let now = T + 60_000;
@@ -129,6 +142,7 @@ describe("Notifier", () => {
   });
 
   it("sends silently at night", async () => {
+    welcomed("111");
     pushEvent(db, "grid_down", { start: T, delaySec: 50 }, T);
     const { tg, sent } = fakeTg();
     await new Notifier(db, tg, opts(["111"], new Date(2026, 9, 21, 3, 0).getTime())).drain();
@@ -136,6 +150,7 @@ describe("Notifier", () => {
   });
 
   it("setup mode sends nothing; first real start skips the old backlog", async () => {
+    welcomed("111");
     pushEvent(db, "soc_low", { soc: 18, threshold: 20 }, T - 3_600_000); // old
     const { tg, sent } = fakeTg();
     expect(await new Notifier(db, tg, opts([])).drain()).toBe(0);
@@ -192,5 +207,130 @@ describe("TelegramApi", () => {
       }) as unknown as typeof fetch,
     });
     expect(((await down.sendMessage(1, "x").catch((e) => e)) as Error).message).not.toContain(token);
+  });
+});
+
+describe("Ukrainian", () => {
+  const msg = (chat: number, text: string, language_code?: string): TgUpdate => ({
+    update_id: 1,
+    message: { message_id: 1, chat: { id: chat, type: "private" }, from: { id: chat, language_code }, text },
+  });
+
+  it("formats grid events with Ukrainian wording, units and decimal commas", () => {
+    seedInverter(85, 1200);
+    const live = { soc: 85, load: 1200, pv: 0, grid: 0, battery: 0, storedKwh: 13.7088, hoursLeft: 11.424, at: T };
+    const down = formatEvent({ id: 1, ts: T, type: "grid_down", payload: JSON.stringify({ start: T, delaySec: 50 }) }, T + 52_000, live, "uk")!;
+    expect(down).toContain("Світло зникло</b> о 11:18");
+    expect(down).toContain("Батарея <b>85%</b> · ≈ 13,7 кВт·год · навантаження 1,2 кВт");
+    expect(down).toContain("≈ 11 год 25 хв до розряду");
+    expect(down).toContain("Помічено через 50 с");
+    const up = formatEvent({ id: 2, ts: T, type: "grid_up", payload: JSON.stringify({ start: T, end: T + 3_600_000 }) }, T + 3_600_000, live, "uk")!;
+    expect(up).toContain("Світло повернулося</b> о 12:18");
+    expect(up).toContain("Без світла: <b>1 год 0 хв</b> (11:18–12:18)");
+    expect(hm(65 * 60_000, "uk")).toBe("1 год 5 хв");
+  });
+
+  it("status reply in Ukrainian", () => {
+    seedInverter(85, 1200);
+    const s = statusText(T + 60_000, "uk");
+    expect(s).toContain("Світла <b>немає</b>"); // seeded inverter reads 2.7 V / 0 Hz, but no grid_state yet → from reading
+    expect(s).toContain("споживання 1,2 кВт");
+    expect(s).not.toContain("NaN");
+  });
+
+  it("each chat gets its own language; /lang switches it", async () => {
+    pushEvent(db, "soc_low", { soc: 18, threshold: 20 }, T);
+    const { tg, sent, queueUpdates } = fakeTg();
+    const bot = new CommandBot(db, tg, opts(["111", "222"], T + 60_000, "uk"));
+    queueUpdates([msg(222, "/lang en")]);
+    await bot.pollOnce();
+    expect(sent.at(-1)!.text).toContain("Language set: English");
+    await new Notifier(db, tg, opts(["111", "222"], T + 60_000, "uk")).drain();
+    expect(sent.find((m) => m.chat === "111" && m.text.includes("Низький заряд батареї: 18%"))).toBeTruthy();
+    expect(sent.find((m) => m.chat === "222" && m.text.includes("Battery low: 18%"))).toBeTruthy();
+  });
+
+  it("plain /lang toggles; /start picks the Telegram app language for a new chat", async () => {
+    const { tg, sent, queueUpdates } = fakeTg();
+    const bot = new CommandBot(db, tg, opts(["111", "333"], T, "uk"));
+    queueUpdates([msg(111, "/lang")]);
+    await bot.pollOnce();
+    expect(sent.at(-1)!.text).toContain("English");
+    queueUpdates([msg(111, "/lang")]);
+    await bot.pollOnce();
+    expect(sent.at(-1)!.text).toContain("українська");
+    queueUpdates([msg(333, "/start", "en-US")]);
+    await bot.pollOnce();
+    expect(sent.at(-1)!.text).toContain("Deye station bot");
+  });
+
+  it("strangers get the setup reply in their app language", async () => {
+    const { tg, sent, queueUpdates } = fakeTg();
+    queueUpdates([msg(999, "/start", "uk")]);
+    await new CommandBot(db, tg, opts(["111"], T, "en")).pollOnce();
+    expect(sent[0].text).toContain("Це приватний бот");
+    expect(sent[0].text).toContain("<code>999</code>");
+  });
+
+  it("command menus exist in both languages with the same commands", () => {
+    const uk = CommandBot.commands("uk").map((c) => c.command);
+    expect(uk).toEqual(CommandBot.commands("en").map((c) => c.command));
+    expect(uk).toContain("lang");
+    expect(CommandBot.commands("uk")[0].description).toMatch(/[а-яіїєґ]/i);
+  });
+});
+
+describe("welcome message for newly added chats", () => {
+  const msg = (chat: number, text: string, language_code?: string): TgUpdate => ({
+    update_id: 1,
+    message: { message_id: 1, chat: { id: chat, type: "private" }, from: { id: chat, language_code }, text },
+  });
+
+  it("welcomes a chat once, in the language it used when asking for its id", async () => {
+    seedInverter();
+    const { tg, sent, queueUpdates } = fakeTg();
+    // Before being allowed: /start from a Ukrainian app gets the chat id and its language is remembered.
+    queueUpdates([msg(555, "/start", "uk")]);
+    await new CommandBot(db, tg, opts(["111"], T, "en")).pollOnce();
+    welcomed("111");
+    // The id is added to .env and the worker restarts.
+    const n = new Notifier(db, tg, opts(["111", "555"], T, "en"));
+    await n.drain();
+    const w = sent.filter((m) => m.chat === "555");
+    expect(w).toHaveLength(2); // setup reply + welcome
+    expect(w[1].text).toContain("Вітаю!");
+    expect(w[1].text).toContain("/status");
+    expect(w[1].text).toContain("Батарея");
+    await n.drain();
+    expect(sent.filter((m) => m.chat === "555")).toHaveLength(2); // not repeated
+    expect(sent.filter((m) => m.chat === "111")).toHaveLength(0);
+  });
+
+  it("retries after a network error; a chat that never pressed Start is skipped without looping", async () => {
+    const { tg, sent, failWith } = fakeTg();
+    let now = T;
+    const n = new Notifier(db, tg, { ...opts(["111", "222"], T, "en"), now: () => now });
+    failWith(new TelegramError("sendMessage: network error", null));
+    await n.drain();
+    expect(sent).toHaveLength(0);
+    now += 10_000;
+    failWith(null); // 111 ok
+    failWith(new TelegramError("sendMessage: 403 Forbidden: bot can't initiate conversation with a user", 403));
+    await n.drain();
+    now += 10_000;
+    await n.drain();
+    expect(sent.map((m) => m.chat)).toEqual(["111"]);
+    expect(kvGet<string[]>(db, "telegram_welcomed_chats")).toEqual(["111", "222"]);
+  });
+
+  it("an allowed chat's /start counts as the welcome; removing and re-adding welcomes again", async () => {
+    const { tg, sent, queueUpdates } = fakeTg();
+    queueUpdates([msg(111, "/start", "en")]);
+    await new CommandBot(db, tg, opts(["111"], T, "en")).pollOnce();
+    await new Notifier(db, tg, opts(["111"], T, "en")).drain();
+    expect(sent).toHaveLength(1); // only the /start reply
+    await new Notifier(db, tg, opts(["222"], T, "en")).drain(); // 111 removed, 222 added
+    await new Notifier(db, tg, opts(["111", "222"], T, "en")).drain(); // 111 back
+    expect(sent.filter((m) => m.text.includes("Welcome!")).map((m) => m.chat)).toEqual(["222", "111"]);
   });
 });

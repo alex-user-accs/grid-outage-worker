@@ -20,7 +20,7 @@ export class TelegramError extends Error {
 export interface TgMessage {
   message_id: number;
   chat: { id: number; type: string; username?: string; first_name?: string };
-  from?: { id: number; username?: string; first_name?: string };
+  from?: { id: number; username?: string; first_name?: string; language_code?: string };
   text?: string;
 }
 
@@ -80,7 +80,8 @@ export class TelegramApi {
     return this.call<TgUpdate[]>("getUpdates", { offset, timeout: timeoutSec, allowed_updates: ["message"] }, signal);
   }
 
-  setMyCommands(commands: { command: string; description: string }[]) {
-    return this.call<boolean>("setMyCommands", { commands });
+  /** Without languageCode: the default menu; with it: the menu for users whose Telegram app uses that language. */
+  setMyCommands(commands: { command: string; description: string }[], languageCode?: string) {
+    return this.call<boolean>("setMyCommands", languageCode ? { commands, language_code: languageCode } : { commands });
   }
 }

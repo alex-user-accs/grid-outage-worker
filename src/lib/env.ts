@@ -51,6 +51,8 @@ const telegramSchema = z.object({
     .default("")
     .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean))
     .pipe(z.array(z.string().regex(/^-?\d+$/, "TELEGRAM_CHAT_IDS must be numeric chat ids, comma-separated"))),
+  /** Language for chats that have not chosen one with /lang. */
+  TELEGRAM_LANGUAGE: z.enum(["uk", "en"]).default("uk"),
   /** Bot API base URL; only for a proxy or tests. */
   TELEGRAM_API_URL: z.string().url().default("https://api.telegram.org"),
   /** Send notifications without sound during NIGHT_HOURS. */
