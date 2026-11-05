@@ -64,7 +64,7 @@ try {
   const sns = devices.filter((d) => d.deviceType !== "COLLECTOR").map((d) => d.deviceSn).slice(0, 10);
   if (sns.length) await step("device-latest", () => client.deviceLatest(sns));
   const now = new Date();
-  await step("station-history-days", () => client.stationHistory(station.id, 2, ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1))));
+  await step("station-history-days", () => client.stationHistory(station.id, 2, ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(now)));
 } catch (err) {
   console.error(`\n✗ ${(err as Error).message}`);
   process.exitCode = 1;

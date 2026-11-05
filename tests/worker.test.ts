@@ -117,6 +117,29 @@ describe("worker schedule", () => {
   });
 });
 
+describe("energy job date ranges", () => {
+  // Deye's endAt is inclusive and day ranges may span at most 31 days (10-01 → 11-01 fails with 2101012).
+  const dayRanges = async (t: number) => {
+    const db = openDb(":memory:");
+    kvSet(db, "station_id", 1001);
+    const calls: string[] = [];
+    const inner = new MockDeyeClient(() => t);
+    const api = Object.assign(Object.create(inner), {
+      stationHistory: (id: number, g: 1 | 2 | 3 | 4, startAt: string, endAt?: string) => {
+        if (g === 2) calls.push(`${startAt}→${endAt}`);
+        return inner.stationHistory(id, g, startAt, endAt);
+      },
+    }) as DeyeApi;
+    await JOBS.find((j) => j.name === "energy")!.run({ db, api, now: t, socLow: 20, socHigh: 100 });
+    return calls;
+  };
+
+  it("asks for whole months, first to last day, on the 31st and on the 1st", async () => {
+    expect(await dayRanges(new Date(2026, 9, 31, 12, 0).getTime())).toEqual(["2026-09-01→2026-09-30", "2026-10-01→2026-10-31"]);
+    expect(await dayRanges(new Date(2026, 10, 1, 12, 0).getTime())).toEqual(["2026-10-01→2026-10-31", "2026-11-01→2026-11-01"]);
+  });
+});
+
 describe("scheduler recovery", () => {
   it("does not record dependent jobs as run when station discovery fails, and retries soon", async () => {
     const db = openDb(":memory:");

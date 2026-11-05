@@ -232,17 +232,19 @@ export const JOBS: Job[] = [
       const id = stationId(db);
       if (!id) return "skipped";
       const d = new Date(now);
+      // Day ranges: endAt is inclusive and Deye allows at most 31 days, so a month is its first to its last day.
+      const monthStart = addMonths(d, 0);
       // Previous month / year: fetch once, keep forever (they no longer change).
       const prevMonth = addMonths(d, -1);
       if (!isFinal(db, id, 2, ym(prevMonth))) {
-        saveHistory(db, id, 2, ym(prevMonth), await api.stationHistory(id, 2, ymd(prevMonth), ymd(addMonths(d, 0))), true, now);
+        saveHistory(db, id, 2, ym(prevMonth), await api.stationHistory(id, 2, ymd(prevMonth), ymd(addDays(monthStart, -1))), true, now);
       }
       const prevYear = String(d.getFullYear() - 1);
       if (!isFinal(db, id, 3, prevYear)) {
         saveHistory(db, id, 3, prevYear, await api.stationHistory(id, 3, `${prevYear}-01`, `${prevYear}-12`), true, now);
       }
-      // Current periods: endAt is exclusive for days, so use tomorrow to include today.
-      saveHistory(db, id, 2, ym(d), await api.stationHistory(id, 2, ymd(addMonths(d, 0)), ymd(addDays(d, 1))), false, now);
+      // Current periods.
+      saveHistory(db, id, 2, ym(d), await api.stationHistory(id, 2, ymd(monthStart), ymd(d)), false, now);
       saveHistory(db, id, 3, String(d.getFullYear()), await api.stationHistory(id, 3, `${d.getFullYear()}-01`, `${d.getFullYear()}-12`), false, now);
     },
   },

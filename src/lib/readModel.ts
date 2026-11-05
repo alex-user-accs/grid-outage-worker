@@ -105,11 +105,43 @@ export function getDaily(days = 30, now = Date.now()): EnergyPoint[] {
   const d = new Date(now);
   const items = [...history(id, 2, ym(addMonths(d, -1))), ...history(id, 2, ym(d))];
   const from = addDays(d, -(days - 1)).getTime();
-  return items
+  // Older stored months may also hold the next month's first day; the later (current-month) copy wins.
+  const byDay = new Map<string, EnergyPoint>();
+  items
     .map((i) => ({ i, date: itemDate(i) }))
     .filter((x): x is { i: StationDataItem; date: Date } => !!x.date && x.date.getTime() >= from)
-    .sort((a, b) => a.date.getTime() - b.date.getTime())
-    .map(({ i, date }) => toEnergy(ymd(date), i));
+    .forEach(({ i, date }) => byDay.set(ymd(date), toEnergy(ymd(date), i)));
+  return [...byDay.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** A numeric value from a device dataList; Deye sometimes sends "null" or "--". */
+export const dataPoint = (list: { key: string; value?: string | number | null }[], re: RegExp) => {
+  const v = list.find((p) => re.test(p.key))?.value;
+  const n = v === null || v === undefined || v === "" ? NaN : Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Today's energy. Deye's daily history has no row for the current day until some time after it ends,
+ * so prefer the inverter's own daily counters (2-min samples) when the sample is from today.
+ */
+export function getTodayEnergy(now = Date.now()): EnergyPoint | null {
+  const dayStart = new Date(now).setHours(0, 0, 0, 0);
+  const inverter = getDevices()?.devices.find((d) => d.deviceType === "INVERTER" && d.latest);
+  const at = parseDeyeTime(inverter?.latest?.data.collectionTime) ?? inverter?.latest?.ts ?? 0;
+  const list = inverter?.latest?.data.dataList ?? [];
+  const generation = dataPoint(list, /^DailyActiveProduction$/i);
+  if (at >= dayStart && generation !== null) {
+    return {
+      label: ymd(new Date(now)),
+      generation,
+      consumption: dataPoint(list, /^DailyConsumption$/i),
+      purchase: dataPoint(list, /^DailyEnergyPurchased$/i),
+      feedIn: dataPoint(list, /^DailyGridFeedIn$/i),
+    };
+  }
+  const last = getDaily(1, now).at(-1);
+  return last?.label === ymd(new Date(now)) ? last : null;
 }
 
 export function getMonthly(months = 12, now = Date.now()): EnergyPoint[] {

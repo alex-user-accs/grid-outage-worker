@@ -50,7 +50,7 @@ export const ANNOTATIONS: Record<string, Annotation> = {
   "/v1.0/station/history": {
     limits: [
       "granularity **1**: `startAt` = `yyyy-MM-dd`; intraday 5-min frames (power fields only). **`endAt` = the same day is required** in practice (else `2101006 invalid param`), despite the docs.",
-      "granularity **2**: `startAt`/`endAt` = `yyyy-MM-dd`, `endAt` **exclusive**, range **≤ 31 days**.",
+      "granularity **2**: `startAt`/`endAt` = `yyyy-MM-dd`, `endAt` **inclusive**, range **≤ 31 days** counting both ends (e.g. `10-01`→`11-01` is rejected with `2101012`).",
       "granularity **3**: `yyyy-MM`, range **≤ 12 months**.",
       "granularity **4**: `yyyy`; yearly values. Summing all years = lifetime totals (Deye FAQ).",
     ],

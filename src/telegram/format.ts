@@ -1,10 +1,11 @@
 import { parseDeyeTime } from "@/lib/dates";
 import {
-  getDaily,
+  dataPoint,
   getDevices,
   getGridStatus,
   getLatest,
   getOutages,
+  getTodayEnergy,
   outageMinutes,
   signedBatteryPower,
   signedGridPower,
@@ -29,11 +30,7 @@ export interface Live {
   at: number | null;
 }
 
-const point = (list: { key: string; value?: string | number | null }[], re: RegExp) => {
-  const v = list.find((p) => re.test(p.key))?.value;
-  const n = v === null || v === undefined || v === "" ? NaN : Number(v);
-  return Number.isFinite(n) ? n : null; // Deye sometimes sends "null" or "--" as a value
-};
+const point = dataPoint;
 
 /** Freshest values: the inverter's 2-min sample, falling back to the 5-min station summary. */
 export function liveValues(): Live {
@@ -163,7 +160,7 @@ export function outagesText(days = 7, now = Date.now(), lang: Lang = "en"): stri
 
 export function todayText(now = Date.now(), lang: Lang = "en"): string {
   const t = T[lang];
-  const d = getDaily(1, now).at(-1);
+  const d = getTodayEnergy(now);
   const dayStart = new Date(now).setHours(0, 0, 0, 0);
   const outages = getOutages(1, now).filter((o) => (o.end ?? now) >= dayStart);
   return [

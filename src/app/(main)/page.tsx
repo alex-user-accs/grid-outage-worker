@@ -14,6 +14,7 @@ import {
   getOutages,
   getStation,
   getTodayCurve,
+  getTodayEnergy,
   getWorkerStatus,
   outageMinutes,
   signedBatteryPower,
@@ -49,10 +50,10 @@ export default function Dashboard() {
   const alerts = getAlerts(20);
   const { pause } = getWorkerStatus();
   const l = latest?.data;
-  const today = daily.at(-1);
   const updated = parseDeyeTime(l?.lastUpdateTime) ?? latest?.ts ?? null;
   const openAlerts = alerts.filter((a) => a.status === 1);
   const now = Date.now();
+  const today = getTodayEnergy(now);
   const gridStatus = getGridStatus();
   const outages = getOutages(30, now);
   const dayStart = new Date(now).setHours(0, 0, 0, 0);

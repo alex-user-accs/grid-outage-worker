@@ -105,7 +105,7 @@ export default function ApiDocsPage() {
         <h2>4. Conventions</h2>
         <ul>
           <li>
-            History <code>granularity</code>: 1 = intraday frames (<code>startAt</code> = <code>endAt</code> = <code>yyyy-MM-dd</code>; Deye rejects a missing <code>endAt</code>), 2 = days (≤ 31, <code>endAt</code> exclusive), 3 = months
+            History <code>granularity</code>: 1 = intraday frames (<code>startAt</code> = <code>endAt</code> = <code>yyyy-MM-dd</code>; Deye rejects a missing <code>endAt</code>), 2 = days (≤ 31, <code>endAt</code> inclusive), 3 = months
             (<code>yyyy-MM</code>, ≤ 12), 4 = years (<code>yyyy</code>).
           </li>
           <li>Timestamps in alert / raw-history requests are 10-digit Unix <b>seconds</b>.</li>

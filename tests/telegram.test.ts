@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { type DB, kvGet, kvSet, openDb } from "@/lib/db";
 import { TelegramApi, TelegramError, type TgUpdate } from "@/telegram/api";
 import { CommandBot, Notifier } from "@/telegram/bot";
-import { esc, formatEvent, hm, statusText } from "@/telegram/format";
+import { esc, formatEvent, hm, statusText, todayText } from "@/telegram/format";
 import type { Lang } from "@/telegram/i18n";
 import { pushEvent } from "@/worker/events";
 import { saveSnapshot } from "@/worker/jobs";
@@ -91,6 +91,39 @@ describe("message formatting", () => {
     expect(formatEvent({ id: 1, ts: T, type: "something_else", payload: "{}" }, T)).toBeNull();
     expect(esc("a & b")).toBe("a &amp; b");
     expect(hm(61 * 60_000)).toBe("1 h 1 min");
+  });
+});
+
+describe("/today", () => {
+  const withDaily = (collectionTime: number) => {
+    db.prepare("INSERT INTO kv(key, value, updated_at) VALUES ('station_id', '1', 0)").run();
+    saveSnapshot(db, "devices", "1", [{ deviceSn: "INV", deviceType: "INVERTER", connectStatus: 1 }]);
+    saveSnapshot(db, "device_latest", "INV", {
+      deviceSn: "INV",
+      collectionTime: collectionTime / 1000,
+      dataList: [
+        { key: "DailyActiveProduction", value: "6.70" },
+        { key: "DailyConsumption", value: "21.90" },
+        { key: "DailyEnergyPurchased", value: "14.70" },
+        { key: "DailyGridFeedIn", value: "0.00" },
+      ],
+    });
+    // Deye's daily history only has yesterday: it must not be shown as today.
+    const yesterday = [{ year: 2026, month: 10, day: 20, generationValue: 3.7, consumptionValue: 17.4, purchaseValue: 13.2, gridValue: 0 }];
+    db.prepare("INSERT INTO history(station_id, granularity, period, json, fetched_at, final) VALUES (1, 2, '2026-10', ?, 0, 0)").run(JSON.stringify(yesterday));
+  };
+
+  it("uses the inverter's daily counters while Deye's daily history has no row for today", () => {
+    withDaily(T);
+    const text = todayText(T, "en");
+    expect(text).toContain("Generated 6.7 kWh");
+    expect(text).toContain("Consumed 21.9 kWh");
+    expect(text).toContain("Bought 14.7 kWh · sold 0 kWh");
+  });
+
+  it("shows dashes rather than yesterday's numbers when the inverter sample is from yesterday", () => {
+    withDaily(T - 24 * 3_600_000);
+    expect(todayText(T, "en")).toContain("Generated —");
   });
 });
 
